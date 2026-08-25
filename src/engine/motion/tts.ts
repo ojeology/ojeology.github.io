@@ -4,6 +4,7 @@
    capabilities honestly, errors are normalized, nothing is faked.
    ============================================================ */
 
+import { useEffect, useState } from "react";
 import type { AudioAsset, DialogueLine, TTSProviderId, VoiceProfile } from "./types";
 
 /* --------------------------------------------- voice bible ---- */
@@ -288,6 +289,27 @@ export function browserVoices(): SpeechSynthesisVoice[] {
 }
 
 /** Best-effort match: exact locale → language family → gender hint. */
+export function findVoiceByName(name: string): SpeechSynthesisVoice | undefined {
+  if (!name) return undefined;
+  return browserVoices().find((v) => v.name === name);
+}
+
+export function useBrowserVoices(): SpeechSynthesisVoice[] {
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>(() => browserVoices());
+  useEffect(() => {
+    const load = () => setVoices(browserVoices());
+    load();
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    window.speechSynthesis.addEventListener("voiceschanged", load);
+    const t = window.setTimeout(load, 250);
+    return () => {
+      window.speechSynthesis.removeEventListener("voiceschanged", load);
+      window.clearTimeout(t);
+    };
+  }, []);
+  return voices;
+}
+
 export function pickBrowserVoice(profile: VoiceProfile): SpeechSynthesisVoice | undefined {
   const voices = browserVoices();
   if (!voices.length) return undefined;

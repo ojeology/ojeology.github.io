@@ -6,12 +6,11 @@ import {
 import StageCanvas, { type StageHandle } from "./studio/StageCanvas";
 import Inspector from "./studio/Inspector";
 import { SceneRail } from "./studio/TrackEditor";
+import PlayersPanel from "./studio/PlayersPanel";
 import { studio, useStudio, type SceneDocument } from "../engine/motion/studio";
 import { ASPECTS, type AspectSpec } from "../engine/motion/types";
 import { sceneAt } from "../engine/motion/timeline";
 import { Card } from "./ui";
-
-const SPEAKERS = ["City Midfielder", "City Captain", "City Player", "Keeper", "Commentator", "Narrator", "Crowd"];
 
 export default function MotionEditor() {
   const state = useStudio();
@@ -64,10 +63,10 @@ export default function MotionEditor() {
           are all separate layers.
         </p>
         <ol className="mt-3 flex flex-wrap gap-2 font-mono text-[10px] uppercase tracking-[0.12em] text-dim">
-          <Step n="1" label="Pick a scene" />
-          <Step n="2" label="Drag the bubbles" />
-          <Step n="3" label="Write the banter" />
-          <Step n="4" label="Play · Export" />
+          <Step n="1" label="Add players" />
+          <Step n="2" label="Pick a voice" />
+          <Step n="3" label="Write banter" />
+          <Step n="4" label="Save · Play" />
         </ol>
       </div>
 
@@ -89,6 +88,8 @@ export default function MotionEditor() {
         </div>
         <SceneRail onSeek={seek} />
       </Card>
+
+      <PlayersPanel />
 
       <div className="grid gap-3 xl:grid-cols-12">
         <div className="space-y-3 xl:col-span-8">
@@ -206,32 +207,45 @@ export default function MotionEditor() {
 }
 
 function BanterPanel({ doc }: { doc: SceneDocument }) {
+  const { players } = useStudio();
   return (
     <Card>
       <div className="flex items-center justify-between gap-2 border-b border-line px-3 py-2.5">
         <div>
           <p className="text-[13px] font-bold text-bone">Banter</p>
-          <p className="font-mono text-[9px] text-faint">type the lines · Pidgin stays exactly as you write it</p>
+          <p className="font-mono text-[9px] text-faint">type a player name or pick one · then write the line</p>
         </div>
         <button
-          onClick={() => studio.addDialogueLine(doc.id)}
+          onClick={() => studio.addDialogueLine(doc.id, players[0]?.name)}
           className="flex items-center gap-1.5 rounded-lg border border-fairway/40 bg-fairway/10 px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-[0.12em] text-fairway hover:bg-fairway/20"
         >
           <Plus size={12} /> Add line
         </button>
       </div>
+      <datalist id="bryme-player-names">
+        {players.map((p) => <option key={p.id} value={p.name} />)}
+      </datalist>
       <div className="divide-y divide-white/[0.05]">
         {doc.dialogue.map((line) => (
           <div key={line.id} className="flex gap-2 p-3">
-            <div className="w-[128px] shrink-0 space-y-1">
-              <select
-                value={line.speaker_label}
-                onChange={(e) => studio.setDialogueField(doc.id, line.id, { speaker_label: e.target.value })}
-                className="w-full rounded border border-white/10 bg-ink px-1.5 py-1 font-mono text-[10px] text-city outline-none"
+            <div className="w-[148px] shrink-0 space-y-1">
+              <input
+                list="bryme-player-names"
+                defaultValue={line.speaker_label}
+                key={`${line.id}-${line.speaker_label}`}
+                onBlur={(e) => {
+                  const v = e.target.value.trim();
+                  if (v && v !== line.speaker_label) studio.setSpeaker(doc.id, line.id, v);
+                }}
+                placeholder="Player name"
+                className="w-full rounded border border-white/10 bg-ink px-1.5 py-1 font-mono text-[11px] text-city outline-none focus:border-city/50"
+              />
+              <button
+                onClick={() => studio.speakDialogue(doc.id, line.id)}
+                className="w-full rounded border border-white/10 py-0.5 font-mono text-[8px] uppercase tracking-[0.14em] text-faint hover:border-city/40 hover:text-city"
               >
-                {SPEAKERS.map((s) => <option key={s}>{s}</option>)}
-              </select>
-              <p className="font-mono text-[8px] uppercase tracking-[0.14em] text-faint">{line.language_label}</p>
+                Hear line
+              </button>
             </div>
             <textarea
               value={line.text}

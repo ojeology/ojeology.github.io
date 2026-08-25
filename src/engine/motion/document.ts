@@ -60,6 +60,7 @@ export interface DialogueLayerLine {
   id: string;
   order: number;
   speaker_label: string;
+  player_id: string | null;
   character_id: string | null;
   text: string;                    // VERBATIM — never auto-translated
   language_label: string;
@@ -362,20 +363,16 @@ export function deriveScene(doc: SceneDocument): Scene {
         dialogue_id: line.id,
       });
     }
-    if (voice && voice.source !== "silent") {
-      elements.push({
-        id: voice.id,
-        type: "audio",
-        start: slot.audio_start,
-        end: slot.audio_end,
-        dialogue_id: line.id,
-        speaker: line.speaker_label,
-        source: voice.url ?? `audio/${line.id}.wav`,
-        gain: voice.gain,
-      });
-    } else if (voice?.source === "silent") {
-      warnings.push(`"${line.speaker_label}" has no audio yet — timing is estimated from the text.`);
-    }
+    elements.push({
+      id: voice?.id ?? `${line.id}-audio`,
+      type: "audio",
+      start: slot.audio_start,
+      end: slot.audio_end,
+      dialogue_id: line.id,
+      speaker: line.speaker_label,
+      source: voice?.url ?? `audio/${line.id}.wav`,
+      gain: voice?.gain ?? 1,
+    });
   }
 
   const focus = resolveFocus(doc);

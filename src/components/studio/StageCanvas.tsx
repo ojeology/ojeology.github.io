@@ -2,7 +2,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRe
 import { ASPECTS, type AspectSpec, type MotionTimeline, type Scene, type TimelineElement } from "../../engine/motion/types";
 import { easeOutBack, sampleCamera, sceneAt, shakeOffset } from "../../engine/motion/timeline";
 import { studio, type BubbleLayer, type SceneDocument } from "../../engine/motion/studio";
-import { applyMix, audioStream, duck, initAudio, playSfx, speakLine, stopSpeech } from "../../engine/motion/audio";
+import { applyMix, audioStream, duck, initAudio, playSfx, stopSpeech } from "../../engine/motion/audio";
 
 export interface StageHandle {
   exportVideo: (onProgress: (pct: number, scene: number) => void) => Promise<{ url: string; bytes: number; mime: string }>;
@@ -214,11 +214,8 @@ const StageCanvas = forwardRef<StageHandle, Props>(function StageCanvas(
           a.playbackRate = Math.max(0.5, Math.min(2, voice.speed));
           players.current.set(key, a);
           void a.play().catch(() => undefined);
-        } else if (voice.source === "ai") {
-          speakLine(
-            { ...line, voice_profile_id: voice.voice_profile_id ?? "vp-narrator", bubble_style: "speech", panel_id: scene.panel_id, order: line.order, priority: line.order, speaker_label: line.speaker_label, character_id: line.character_id, text: line.text, language_label: line.language_label, kind: "speech", emotion: line.emotion, id: line.id, speed_override: voice.speed, pitch_override: voice.pitch },
-            (r) => !r.cancelled && studio.reportMeasured(scene.id, line.id, r.measured)
-          );
+        } else {
+          studio.speakDialogue(scene.id, line.id);
         }
       }
     },

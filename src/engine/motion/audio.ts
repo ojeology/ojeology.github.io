@@ -252,19 +252,29 @@ export interface SpokenResult {
  * actually took. That measurement is fed back into the timeline so
  * bubbles re-sync to real delivery instead of the estimate.
  */
-export function speakLine(line: DialogueLine, onEnd?: (r: SpokenResult) => void): void {
+export interface SpeakVoice {
+  voiceName?: string;
+  lang?: string;
+  rate?: number;
+  pitch?: number;
+  volume?: number;
+}
+
+export function speakText(text: string, voice: SpeakVoice = {}, onEnd?: (r: SpokenResult) => void): void {
   if (typeof window === "undefined" || !("speechSynthesis" in window)) {
     onEnd?.({ measured: 0, cancelled: true });
     return;
   }
-  const profile = voiceProfile(line.voice_profile_id);
-  const u = new SpeechSynthesisUtterance(line.text); // verbatim, never rewritten
-  const v = pickBrowserVoice(profile);
-  if (v) u.voice = v;
-  u.lang = v?.lang ?? profile.language;
-  u.rate = clampRate(line.speed_override ?? profile.speed);
-  u.pitch = Math.max(0, Math.min(2, line.pitch_override ?? profile.pitch));
-  u.volume = profile.volume;
+  window.speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  const named = voice.voiceName
+    ? window.speechSynthesis.getVoices().find((v) => v.name === voice.voiceName)
+    : undefined;
+  if (named) u.voice = named;
+  u.lang = named?.lang ?? voice.lang ?? "en-GB";
+  u.rate = clampRate(voice.rate ?? 1);
+  u.pitch = Math.max(0, Math.min(2, voice.pitch ?? 1));
+  u.volume = voice.volume ?? 1;
 
   const t0 = performance.now();
   u.onend = () => {
@@ -277,6 +287,22 @@ export function speakLine(line: DialogueLine, onEnd?: (r: SpokenResult) => void)
   };
   activeUtterance = u;
   window.speechSynthesis.speak(u);
+}
+
+export function speakLine(line: DialogueLine, onEnd?: (r: SpokenResult) => void, extra?: SpeakVoice): void {
+  const profile = voiceProfile(line.voice_profile_id);
+  const picked = extra?.voiceName ? undefined : pickBrowserVoice(profile);
+  speakText(
+    line.text,
+    {
+      voiceName: extra?.voiceName ?? picked?.name,
+      lang: extra?.lang ?? picked?.lang ?? profile.language,
+      rate: extra?.rate ?? line.speed_override ?? profile.speed,
+      pitch: extra?.pitch ?? line.pitch_override ?? profile.pitch,
+      volume: extra?.volume ?? profile.volume,
+    },
+    onEnd
+  );
 }
 
 function clampRate(r: number) {

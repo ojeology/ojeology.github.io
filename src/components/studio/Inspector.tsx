@@ -6,7 +6,7 @@ import {
 import { studio, useStudio, type BubbleLayer, type SceneDocument } from "../../engine/motion/studio";
 import { SFX_LIBRARY, type BubbleStyle, type CameraMove, type SfxId, type TransitionKind } from "../../engine/motion/types";
 import { SPORTS_BIBLE, SQUAD_TEAMS, sportsCharacter, squadFor } from "../../engine/motion/sportsbible";
-import { previewAudio, recorder, voiceFromFile } from "../../engine/motion/editProviders";
+import { recorder, voiceFromFile } from "../../engine/motion/editProviders";
 import { IMAGE_EDIT_PROVIDERS, type ImageEditProviderId } from "../../engine/motion/editProviders";
 import { Chip } from "../ui";
 
@@ -249,10 +249,14 @@ function BubblePanel({ doc, bubbleId }: { doc: SceneDocument; bubbleId: string }
           </div>
         </Row>
         <Row label="speaker">
-          <select value={line?.speaker_label ?? ""} onChange={(e) => line && studio.setDialogueField(doc.id, line.id, { speaker_label: e.target.value })}
-            className="min-w-0 flex-1 rounded border border-white/10 bg-ink px-1.5 py-1 font-mono text-[9.5px] text-bone outline-none">
-            {["City Player", "City Captain", "City Midfielder", "Keeper", "Commentator", "Narrator", "Crowd"].map((s) => <option key={s}>{s}</option>)}
-          </select>
+          <input
+            list="bryme-player-names"
+            defaultValue={line?.speaker_label ?? ""}
+            key={line?.id}
+            onBlur={(e) => line && e.target.value.trim() && studio.setSpeaker(doc.id, line.id, e.target.value)}
+            className="min-w-0 flex-1 rounded border border-white/10 bg-ink px-1.5 py-1 font-mono text-[9.5px] text-bone outline-none"
+            placeholder="Type a player name"
+          />
         </Row>
         <Row label="x"><Slider value={b.x} min={0.05} max={0.95} step={0.01} onChange={(v) => set({ x: v })} /></Row>
         <Row label="y"><Slider value={b.y} min={0.05} max={0.95} step={0.01} onChange={(v) => set({ y: v })} /></Row>
@@ -324,10 +328,14 @@ function DialoguePanel({ doc, lineId }: { doc: SceneDocument; lineId: string }) 
           {timing && <Chip>{timing.audio_start.toFixed(2)}s → {timing.audio_end.toFixed(2)}s</Chip>}
         </div>
         <Row label="speaker">
-          <select value={line.speaker_label} onChange={(e) => studio.setDialogueField(doc.id, lineId, { speaker_label: e.target.value })}
-            className="min-w-0 flex-1 rounded border border-white/10 bg-ink px-1.5 py-1 font-mono text-[9.5px] text-bone outline-none">
-            {["City Player", "City Captain", "City Midfielder", "Keeper", "Commentator", "Narrator", "Crowd"].map((s) => <option key={s}>{s}</option>)}
-          </select>
+          <input
+            list="bryme-player-names"
+            defaultValue={line.speaker_label}
+            key={line.id}
+            onBlur={(e) => e.target.value.trim() && studio.setSpeaker(doc.id, lineId, e.target.value)}
+            className="min-w-0 flex-1 rounded border border-white/10 bg-ink px-1.5 py-1 font-mono text-[9.5px] text-bone outline-none"
+            placeholder="Type a player name"
+          />
         </Row>
         <Row label="character">
           <select value={line.character_id ?? ""} onChange={(e) => studio.setDialogueField(doc.id, lineId, { character_id: e.target.value || null })}
@@ -418,7 +426,7 @@ function VoicePanel({ doc, lineId }: { doc: SceneDocument; lineId: string }) {
             <Btn tone="blue" onClick={startRec}><Mic size={11} /> Record</Btn>
           )}
           <Btn onClick={() => fileRef.current?.click()}><Upload size={11} /> Upload</Btn>
-          <Btn onClick={() => v.url && previewAudio(v.url, v.gain, v.speed)} disabled={!v.url}><Play size={11} /> Preview</Btn>
+          <Btn onClick={() => studio.speakDialogue(doc.id, lineId)}><Play size={11} /> Hear line</Btn>
         </div>
         <input ref={fileRef} type="file" accept="audio/*" hidden
           onChange={async (e) => {

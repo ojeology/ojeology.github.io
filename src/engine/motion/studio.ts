@@ -22,6 +22,9 @@ import { ASPECTS, SFX_LIBRARY, type AspectSpec, type BubbleStyle, type CameraMov
 import { TTS_PROVIDERS, cacheKey, estimateDuration, resolveVoice, voiceProfile } from "./tts";
 import { fromLegacy, sportsCharacter } from "./sportsbible";
 import { IMAGE_EDIT_PROVIDERS, measureAudio, type ImageEditProviderId, type UserAudioResult } from "./editProviders";
+import { SEED_PLAYERS, newPlayerId, playerByName, type Player } from "./players";
+import { clearFilm, readFilm, writeFilm } from "./persist";
+import { speakText, stopSpeech, type SpokenResult } from "./audio";
 
 /* ------------------------------------------------ selection ---- */
 
@@ -51,6 +54,8 @@ export interface ExportJob {
   project_revision_at_export: number;
 }
 
+export type SaveStatus = "saved" | "unsaved" | "saving" | "error";
+
 interface StudioState {
   project: ProjectDocument;
   timeline: MotionTimeline;
@@ -61,6 +66,9 @@ interface StudioState {
   ttsProvider: TTSProviderId;
   imageProvider: ImageEditProviderId;
   lastError: string | null;
+  players: Player[];
+  saveStatus: SaveStatus;
+  lastSavedAt: string | null;
 }
 
 /* --------------------------------------------- seed builder ---- */
@@ -73,6 +81,16 @@ const SPEAKER_TO_CHARACTER: Record<string, string> = {
   Commentator: "neutral-commentator",
   Narrator: null as unknown as string,
   Crowd: "neutral-crowd",
+};
+
+const SPEAKER_TO_PLAYER: Record<string, string> = {
+  "City Midfielder": "pl_mid",
+  "City Captain": "pl_cap",
+  "City Player": "pl_cb",
+  Keeper: "pl_gk",
+  Commentator: "pl_com",
+  Narrator: "pl_nar",
+  Crowd: "pl_crd",
 };
 
 const SFX_BY_EVENT: Partial<Record<EventType, { sfx: SfxId; at: number }[]>> = {
@@ -108,6 +126,7 @@ function buildSceneDocument(panelId: string): SceneDocument {
       id,
       order: i + 1,
       speaker_label: d.speaker,
+      player_id: SPEAKER_TO_PLAYER[d.speaker] ?? null,
       character_id: SPEAKER_TO_CHARACTER[d.speaker] ?? null,
       text: d.text,
       language_label: d.language ?? vp.language_label,
@@ -195,8 +214,28 @@ function buildProject(): ProjectDocument {
 class StudioRuntime {
   private state: StudioState;
   private listeners = new Set<() => void>();
+  private saveTimer: number | null = null;
 
   constructor() {
+    const loaded = readFilm();
+    if (loaded) {
+      const project = loaded.project;
+      this.state = {
+        project,
+        timeline: deriveTimeline(project),
+        selection: { kind: "none" },
+        mutations: [],
+        busy: null,
+        exports: [],
+        ttsProvider: loaded.ttsProvider ?? "browser",
+        imageProvider: "sandbox",
+        lastError: null,
+        players: loaded.players.length ? loaded.players : SEED_PLAYERS.map((p) => ({ ...p })),
+        saveStatus: "saved",
+        lastSavedAt: loaded.savedAt,
+      };
+      return;
+    }
     const project = buildProject();
     this.state = {
       project,
@@ -208,6 +247,9 @@ class StudioRuntime {
       ttsProvider: "browser",
       imageProvider: "sandbox",
       lastError: null,
+      players: SEED_PLAYERS.map((p) => ({ ...p })),
+      saveStatus: "saved",
+      lastSavedAt: null,
     };
   }
 
@@ -237,6 +279,49 @@ class StudioRuntime {
       project,
       timeline: deriveTimeline(project),
       mutations: [mut, ...this.state.mutations].slice(0, 120),
+      saveStatus: "unsaved",
+    };
+    this.emit();
+    this.armSave();
+  }
+
+  private armSave() {
+    if (typeof window === "undefined") return;
+    if (this.saveTimer != null) window.clearTimeout(this.saveTimer);
+    this.saveTimer = window.setTimeout(() => this.saveNow(), 700);
+  }
+
+  saveNow() {
+    try {
+      const savedAt = writeFilm({
+        players: this.state.players,
+        project: this.state.project,
+        ttsProvider: this.state.ttsProvider,
+      });
+      this.state = { ...this.state, saveStatus: "saved", lastSavedAt: savedAt, lastError: this.state.lastError };
+      this.emit();
+    } catch {
+      this.state = { ...this.state, saveStatus: "error", lastError: "Could not save. Storage may be full." };
+      this.emit();
+    }
+  }
+
+  resetFilm() {
+    clearFilm();
+    const project = buildProject();
+    this.state = {
+      project,
+      timeline: deriveTimeline(project),
+      selection: { kind: "none" },
+      mutations: [],
+      busy: null,
+      exports: [],
+      ttsProvider: "browser",
+      imageProvider: "sandbox",
+      lastError: null,
+      players: SEED_PLAYERS.map((p) => ({ ...p })),
+      saveStatus: "saved",
+      lastSavedAt: null,
     };
     this.emit();
   }
@@ -288,8 +373,10 @@ class StudioRuntime {
         mutation("aspect.change", "*", ["bubbles"], "free", id, "auto-placed bubbles re-flowed for new safe zones; hand-placed bubbles kept"),
         ...this.state.mutations,
       ].slice(0, 120),
+      saveStatus: "unsaved",
     };
     this.emit();
+    this.armSave();
   }
 
   setMix(patch: Partial<ProjectDocument["mix"]>) {
@@ -314,8 +401,10 @@ class StudioRuntime {
       project,
       timeline: deriveTimeline(project),
       mutations: [mut, ...this.state.mutations].slice(0, 120),
+      saveStatus: "unsaved",
     };
     this.emit();
+    this.armSave();
   }
 
   /** Blank scenario — optionally seeded with an uploaded image. */
@@ -596,6 +685,7 @@ class StudioRuntime {
   }
 
   addDialogueLine(sceneId: string, speaker = "City Midfielder") {
+    const player = this.ensurePlayer(speaker);
     const doc = this.scene(sceneId);
     const id = `${sceneId}-l${doc.dialogue.length + 1}-${Math.random().toString(16).slice(2, 5)}`;
     const vp = resolveVoice(speaker);
@@ -610,7 +700,8 @@ class StudioRuntime {
         dialogue: [
           ...d.dialogue,
           {
-            id, order: d.dialogue.length + 1, speaker_label: speaker,
+            id, order: d.dialogue.length + 1, speaker_label: player.name,
+            player_id: player.id,
             character_id: SPEAKER_TO_CHARACTER[speaker] ?? null,
             text: "New line — type your dialogue.",
             language_label: vp.language_label, kind: "speech", emotion: vp.default_emotion,
@@ -949,6 +1040,158 @@ class StudioRuntime {
     this.updateExport(id, { status: "cancelled" });
   }
 
+  /* --------------------------------------------- PLAYERS ---- */
+
+  ensurePlayer(name: string, extras?: Partial<Player>): Player {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      return this.state.players[0] ?? SEED_PLAYERS[0];
+    }
+    const existing = playerByName(this.state.players, trimmed);
+    if (existing) {
+      if (extras && Object.keys(extras).length) this.updatePlayer(existing.id, extras);
+      return playerByName(this.state.players, trimmed) ?? existing;
+    }
+    const player: Player = {
+      id: newPlayerId(),
+      name: trimmed,
+      team: extras?.team ?? "city",
+      voiceName: extras?.voiceName ?? "",
+      voiceLang: extras?.voiceLang ?? "en-NG",
+      gender: extras?.gender ?? "male",
+      speed: extras?.speed ?? 1,
+      pitch: extras?.pitch ?? 1,
+      language_label: extras?.language_label ?? "Nigerian Pidgin",
+    };
+    this.state = { ...this.state, players: [...this.state.players, player], saveStatus: "unsaved" };
+    this.emit();
+    this.armSave();
+    return player;
+  }
+
+  addPlayer(name: string, extras?: Partial<Player>): Player | null {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      this.setPartial({ lastError: "Type a player name first." });
+      return null;
+    }
+    if (playerByName(this.state.players, trimmed)) {
+      this.setPartial({ lastError: `"${trimmed}" is already on the roster.` });
+      return playerByName(this.state.players, trimmed) ?? null;
+    }
+    return this.ensurePlayer(trimmed, extras);
+  }
+
+  updatePlayer(id: string, patch: Partial<Player>) {
+    const prev = this.state.players.find((p) => p.id === id);
+    if (!prev) return;
+    const next = { ...prev, ...patch };
+    const players = this.state.players.map((p) => (p.id === id ? next : p));
+    let project = this.state.project;
+    if (patch.name && patch.name !== prev.name) {
+      const scenes = project.scenes.map((s) => ({
+        ...s,
+        dialogue: s.dialogue.map((l) => (l.player_id === id || l.speaker_label === prev.name ? { ...l, speaker_label: next.name, player_id: id } : l)),
+      }));
+      project = { ...project, scenes, revision: project.revision + 1, updated_at: stamp() };
+    }
+    this.state = {
+      ...this.state,
+      players,
+      project,
+      timeline: deriveTimeline(project),
+      saveStatus: "unsaved",
+    };
+    this.emit();
+    this.armSave();
+  }
+
+  removePlayer(id: string) {
+    if (this.state.players.length <= 1) {
+      this.setPartial({ lastError: "Keep at least one player." });
+      return;
+    }
+    this.state = { ...this.state, players: this.state.players.filter((p) => p.id !== id), saveStatus: "unsaved" };
+    this.emit();
+    this.armSave();
+  }
+
+  setSpeaker(sceneId: string, lineId: string, name: string) {
+    const player = this.ensurePlayer(name);
+    this.commit(
+      sceneId,
+      (d) => ({
+        ...d,
+        dialogue: d.dialogue.map((l) =>
+          l.id === lineId
+            ? { ...l, speaker_label: player.name, player_id: player.id, language_label: player.language_label }
+            : l
+        ),
+      }),
+      mutation("dialogue.speaker", sceneId, ["dialogue"], "free", player.name, "voice assignment follows this player")
+    );
+  }
+
+  playerForLine(line: DialogueLayerLine): Player | undefined {
+    return this.state.players.find((p) => p.id === line.player_id) ?? playerByName(this.state.players, line.speaker_label);
+  }
+
+  speakDialogue(sceneId: string, lineId: string, onEnd?: (r: SpokenResult) => void) {
+    const doc = this.scene(sceneId);
+    const line = doc?.dialogue.find((l) => l.id === lineId);
+    if (!line) {
+      onEnd?.({ measured: 0, cancelled: true });
+      return;
+    }
+    const player = this.playerForLine(line);
+    speakText(
+      line.text,
+      {
+        voiceName: player?.voiceName,
+        lang: player?.voiceLang,
+        rate: player?.speed,
+        pitch: player?.pitch,
+      },
+      (r) => {
+        if (!r.cancelled) this.reportMeasured(sceneId, lineId, r.measured);
+        onEnd?.(r);
+      }
+    );
+  }
+
+  previewPlayer(id: string) {
+    const p = this.state.players.find((x) => x.id === id);
+    if (!p) return;
+    speakText(`My name is ${p.name}. Omo, we don win am!`, {
+      voiceName: p.voiceName,
+      lang: p.voiceLang,
+      rate: p.speed,
+      pitch: p.pitch,
+    });
+  }
+
+  stopVoices() {
+    stopSpeech();
+  }
+
+  hydrateDefaultVoices(voices: { name: string; lang: string }[]) {
+    if (!voices.length) return;
+    let changed = false;
+    const players = this.state.players.map((p) => {
+      if (p.voiceName) return p;
+      const want = p.gender === "female" ? /female|zira|samantha|hazel|susan|karen|tessa|fiona/i : /male|daniel|david|george|fred|ravi|thomas|google uk english male/i;
+      const byLang = voices.filter((v) => v.lang.toLowerCase().startsWith((p.voiceLang || "en").split("-")[0]));
+      const hit = byLang.find((v) => want.test(v.name)) ?? byLang[0] ?? voices[0];
+      if (!hit) return p;
+      changed = true;
+      return { ...p, voiceName: hit.name, voiceLang: hit.lang || p.voiceLang };
+    });
+    if (!changed) return;
+    this.state = { ...this.state, players, saveStatus: "unsaved" };
+    this.emit();
+    this.armSave();
+  }
+
   /* --------------------------------------------- derived ---- */
 
   timingFor(sceneId: string) {
@@ -979,4 +1222,5 @@ export function useStudio(): StudioState {
 export { ALL_LAYERS, deriveScene, computeTiming };
 export type { SceneDocument, ProjectDocument, Mutation, LayerName, BubbleLayer, VoiceAsset, DialogueLayerLine, SfxInstance, CameraLayer };
 export type { CameraMove };
+export type { Player, PlayerTeam } from "./players";
 
