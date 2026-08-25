@@ -28,9 +28,38 @@ export function readFilm(): SavedFilm | null {
 export function writeFilm(data: Omit<SavedFilm, "v" | "savedAt">): string {
   const savedAt = new Date().toISOString();
   const payload: SavedFilm = { v: 1, savedAt, ...data };
-  const json = JSON.stringify(payload);
-  localStorage.setItem(KEY, json);
+  localStorage.setItem(KEY, JSON.stringify(payload));
   return savedAt;
+}
+
+export async function materializeProjectImages(project: ProjectDocument): Promise<ProjectDocument> {
+  const scenes = await Promise.all(
+    project.scenes.map(async (s) => {
+      const url = s.image.current.url;
+      if (!url || !url.startsWith("blob:")) return s;
+      try {
+        const data = await blobToDataUrl(url);
+        return { ...s, image: { ...s.image, current: { ...s.image.current, url: data } } };
+      } catch {
+        return s;
+      }
+    })
+  );
+  return { ...project, scenes };
+}
+
+function blobToDataUrl(url: string): Promise<string> {
+  return fetch(url)
+    .then((r) => r.blob())
+    .then(
+      (blob) =>
+        new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result));
+          reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(blob);
+        })
+    );
 }
 
 export function clearFilm() {

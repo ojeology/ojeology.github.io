@@ -7,6 +7,7 @@ import StageCanvas, { type StageHandle } from "./studio/StageCanvas";
 import Inspector from "./studio/Inspector";
 import { SceneRail } from "./studio/TrackEditor";
 import PlayersPanel from "./studio/PlayersPanel";
+import ImageTray from "./studio/ImageTray";
 import { studio, useStudio, type SceneDocument } from "../engine/motion/studio";
 import { ASPECTS, type AspectSpec } from "../engine/motion/types";
 import { sceneAt } from "../engine/motion/timeline";
@@ -89,6 +90,8 @@ export default function MotionEditor() {
         <SceneRail onSeek={seek} />
       </Card>
 
+      <ImageTray sceneId={doc?.id} />
+
       <PlayersPanel />
 
       <div className="grid gap-3 xl:grid-cols-12">
@@ -138,6 +141,7 @@ export default function MotionEditor() {
                     const line = scene?.dialogue.find((l) => l.bubble_id === bubbleId);
                     if (line) studio.editDialogueText(s, line.id, text);
                   }}
+                  onDropImage={(file) => doc && studio.replaceImageFromFile(doc.id, file)}
                 />
               </div>
             </div>

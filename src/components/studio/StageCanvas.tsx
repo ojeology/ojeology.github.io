@@ -1,7 +1,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { ASPECTS, type AspectSpec, type MotionTimeline, type Scene, type TimelineElement } from "../../engine/motion/types";
 import { easeOutBack, sampleCamera, sceneAt, shakeOffset } from "../../engine/motion/timeline";
-import { studio, type BubbleLayer, type SceneDocument } from "../../engine/motion/studio";
+import { studio, useStudio, type BubbleLayer, type SceneDocument } from "../../engine/motion/studio";
 import { applyMix, audioStream, duck, initAudio, playSfx, stopSpeech } from "../../engine/motion/audio";
 
 export interface StageHandle {
@@ -27,6 +27,7 @@ interface Props {
   onMoveBubble: (sceneId: string, bubbleId: string, x: number, y: number) => void;
   onResizeBubble: (sceneId: string, bubbleId: string, width: number) => void;
   onEditText?: (sceneId: string, bubbleId: string, text: string) => void;
+  onDropImage?: (file: File) => void;
 }
 
 interface HitBox {
@@ -48,7 +49,7 @@ const StageCanvas = forwardRef<StageHandle, Props>(function StageCanvas(
   {
     timeline, docs, aspect, time, playing, showSafe, showBoxes, muted, selectedBubble,
     editMode = true, cinematic = true,
-    onTime, onEnded, onPickBubble, onMoveBubble, onResizeBubble, onEditText,
+    onTime, onEnded, onPickBubble, onMoveBubble, onResizeBubble, onEditText, onDropImage,
   },
   ref
 ) {
@@ -118,8 +119,11 @@ const StageCanvas = forwardRef<StageHandle, Props>(function StageCanvas(
 
       const imgUrl = doc?.image.current.url || scene.image_url;
       const img = imgUrl ? images.current.get(imgUrl) : undefined;
+      const editingNow = editMode && !playing;
+
       if (img?.complete && img.naturalWidth) {
-        drawCropped(ctx, img, W, H, cam, jit);
+        if (editingNow) drawContained(ctx, img, W, H);
+        else drawCropped(ctx, img, W, H, cam, jit);
       } else {
         ctx.fillStyle = "#12160F";
         ctx.fillRect(0, 0, W, H);
@@ -129,7 +133,7 @@ const StageCanvas = forwardRef<StageHandle, Props>(function StageCanvas(
         ctx.fillText(imgUrl ? "Loading the frame…" : "Drop an image onto this scene", W / 2, H / 2);
       }
 
-      if (cinematic) paintVignette(ctx, W, H);
+      if (cinematic && !editingNow) paintVignette(ctx, W, H);
 
       const trans = scene.elements.find((e) => e.type === "transition");
       if (trans && local >= trans.start && playing) {
@@ -140,9 +144,7 @@ const StageCanvas = forwardRef<StageHandle, Props>(function StageCanvas(
         paintTransition(ctx, W, H, timeline.scenes[idx - 1].transition_out, 1 - local / 0.35, true);
       }
 
-      const editingNow = editMode && !playing;
-
-      if (doc) {
+      if (doc && !editingNow) {
         for (const layer of doc.bubbles) {
           if (!layer.visible) continue;
           const el = scene.elements.find((e) => e.id === layer.id);
@@ -177,7 +179,7 @@ const StageCanvas = forwardRef<StageHandle, Props>(function StageCanvas(
         }
       }
 
-      if (cinematic) {
+      if (cinematic && !editingNow) {
         paintLetterbox(ctx, W, H);
         paintLowerThird(ctx, W, H, scene, doc);
       }
@@ -422,20 +424,47 @@ const StageCanvas = forwardRef<StageHandle, Props>(function StageCanvas(
     },
   }));
 
+  const found = sceneAt(timeline, time);
+  const liveDoc = found ? docs.find((d) => d.id === found.scene.id) : undefined;
+  const editingNow = editMode && !playing;
+
   return (
-    <div ref={wrapRef} className="relative h-full w-full">
+    <div
+      ref={wrapRef}
+      className="relative h-full w-full"
+      onDragOver={(e) => {
+        if (onDropImage) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "copy";
+        }
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        const file = e.dataTransfer.files?.[0];
+        if (file && file.type.startsWith("image/") && onDropImage) onDropImage(file);
+      }}
+    >
       <canvas
         ref={canvasRef}
         width={Math.round(spec.width / 2)}
         height={Math.round(spec.height / 2)}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
-        onDoubleClick={onDoubleClick}
+        onPointerDown={editingNow ? undefined : onPointerDown}
+        onPointerMove={editingNow ? undefined : onPointerMove}
+        onPointerUp={editingNow ? undefined : onPointerUp}
+        onPointerCancel={editingNow ? undefined : onPointerUp}
+        onDoubleClick={editingNow ? undefined : onDoubleClick}
         style={{ cursor: playing ? "default" : cursor }}
-        className="h-full w-full touch-none object-contain"
+        className={`h-full w-full object-contain ${editingNow ? "pointer-events-none" : "touch-none"}`}
       />
+      {editingNow && liveDoc && (
+        <OverlayBubbles
+          doc={liveDoc}
+          selectedBubble={selectedBubble}
+          onPickBubble={onPickBubble}
+          onMoveBubble={onMoveBubble}
+          onEditText={onEditText}
+        />
+      )}
       {editing && (
         <textarea
           autoFocus
@@ -453,10 +482,10 @@ const StageCanvas = forwardRef<StageHandle, Props>(function StageCanvas(
           style={{ left: editing.left, top: editing.top, width: editing.width, minHeight: editing.height }}
         />
       )}
-      {editMode && !playing && !editing && (
+      {editingNow && (
         <div className="pointer-events-none absolute bottom-2 left-2 right-2 flex justify-center">
-          <span className="rounded-full bg-black/70 px-3 py-1 font-mono text-[9px] uppercase tracking-[0.18em] text-bone/80">
-            Drag a bubble · double-click to rewrite the line
+          <span className="rounded-full bg-black/75 px-3 py-1 font-mono text-[9px] uppercase tracking-[0.16em] text-bone/85">
+            Drag bubbles onto players · drop an image here to replace the still
           </span>
         </div>
       )}
@@ -467,7 +496,118 @@ const StageCanvas = forwardRef<StageHandle, Props>(function StageCanvas(
 export default StageCanvas;
 
 function clamp01(v: number) {
-  return Math.max(0.06, Math.min(0.94, v));
+  return Math.max(0.04, Math.min(0.96, v));
+}
+
+function drawContained(ctx: CanvasRenderingContext2D, img: HTMLImageElement, W: number, H: number) {
+  const iw = img.naturalWidth;
+  const ih = img.naturalHeight;
+  const s = Math.min(W / iw, H / ih);
+  const dw = iw * s;
+  const dh = ih * s;
+  ctx.drawImage(img, (W - dw) / 2, (H - dh) / 2, dw, dh);
+}
+
+const PARK = [
+  { id: "L", label: "Left", x: 0.22, y: 0.3 },
+  { id: "R", label: "Right", x: 0.78, y: 0.3 },
+  { id: "T", label: "Top", x: 0.5, y: 0.16 },
+  { id: "B", label: "Low", x: 0.5, y: 0.74 },
+];
+
+function OverlayBubbles({
+  doc, selectedBubble, onPickBubble, onMoveBubble,
+}: {
+  doc: SceneDocument;
+  selectedBubble: string | null;
+  onPickBubble: (sceneId: string, bubbleId: string | null) => void;
+  onMoveBubble: (sceneId: string, bubbleId: string, x: number, y: number) => void;
+  onEditText?: (sceneId: string, bubbleId: string, text: string) => void;
+}) {
+  const { players } = useStudio();
+  const drag = useRef<{ id: string; grabX: number; grabY: number } | null>(null);
+
+  return (
+    <div className="absolute inset-0 z-[5]">
+      {doc.bubbles.filter((b) => b.visible).map((b) => {
+        const line = doc.dialogue.find((l) => l.bubble_id === b.id);
+        const selected = selectedBubble === b.id;
+        return (
+          <div
+            key={b.id}
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+              onPickBubble(doc.id, b.id);
+              const parent = e.currentTarget.parentElement!.getBoundingClientRect();
+              drag.current = {
+                id: b.id,
+                grabX: (e.clientX - parent.left) / parent.width - b.x,
+                grabY: (e.clientY - parent.top) / parent.height - b.y,
+              };
+            }}
+            onPointerMove={(e) => {
+              if (!drag.current || drag.current.id !== b.id) return;
+              const parent = e.currentTarget.parentElement!.getBoundingClientRect();
+              const x = clamp01((e.clientX - parent.left) / parent.width - drag.current.grabX);
+              const y = clamp01((e.clientY - parent.top) / parent.height - drag.current.grabY);
+              e.currentTarget.style.left = `${x * 100}%`;
+              e.currentTarget.style.top = `${y * 100}%`;
+            }}
+            onPointerUp={(e) => {
+              if (!drag.current || drag.current.id !== b.id) return;
+              const parent = e.currentTarget.parentElement!.getBoundingClientRect();
+              const x = clamp01((e.clientX - parent.left) / parent.width - drag.current.grabX);
+              const y = clamp01((e.clientY - parent.top) / parent.height - drag.current.grabY);
+              drag.current = null;
+              onMoveBubble(doc.id, b.id, x, y);
+            }}
+            className={`absolute max-w-[48%] -translate-x-1/2 -translate-y-1/2 cursor-grab touch-none select-none rounded-2xl px-3 py-2 shadow-lg active:cursor-grabbing ${
+              selected ? "ring-2 ring-fairway" : ""
+            }`}
+            style={{
+              left: `${b.x * 100}%`,
+              top: `${b.y * 100}%`,
+              width: `${Math.max(20, b.width * 100)}%`,
+              background: b.fill,
+              color: b.text_color,
+              border: `2px solid ${selected ? "#3DD68C" : b.stroke}`,
+            }}
+          >
+            <div className="mb-1 font-mono text-[9px] font-bold uppercase tracking-[0.12em] opacity-70">
+              {line?.speaker_label ?? "—"}
+            </div>
+            <div className="text-[13px] font-semibold leading-snug">{line?.text || "…"}</div>
+            {selected && (
+              <div className="mt-2 flex flex-wrap gap-1" onPointerDown={(e) => e.stopPropagation()}>
+                {PARK.map((p) => (
+                  <button
+                    key={p.id}
+                    onClick={() => onMoveBubble(doc.id, b.id, p.x, p.y)}
+                    className="rounded bg-black/10 px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-wide hover:bg-black/20"
+                  >
+                    {p.label}
+                  </button>
+                ))}
+                {players.slice(0, 8).map((p) => (
+                  <button
+                    key={p.id}
+                    onClick={() => {
+                      if (line) studio.setSpeaker(doc.id, line.id, p.name);
+                      onMoveBubble(doc.id, b.id, p.team === "bournemouth" ? 0.78 : p.team === "neutral" ? 0.5 : 0.22, p.team === "neutral" ? 0.16 : 0.3);
+                    }}
+                    className="rounded bg-fairway/25 px-1.5 py-0.5 font-mono text-[8px] text-ink hover:bg-fairway/45"
+                  >
+                    {p.name.split(" ")[0]}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 function drawCropped(

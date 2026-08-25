@@ -23,7 +23,7 @@ import { TTS_PROVIDERS, cacheKey, estimateDuration, resolveVoice, voiceProfile }
 import { fromLegacy, sportsCharacter } from "./sportsbible";
 import { IMAGE_EDIT_PROVIDERS, measureAudio, type ImageEditProviderId, type UserAudioResult } from "./editProviders";
 import { SEED_PLAYERS, newPlayerId, playerByName, type Player } from "./players";
-import { clearFilm, readFilm, writeFilm } from "./persist";
+import { clearFilm, materializeProjectImages, readFilm, writeFilm } from "./persist";
 import { speakText, stopSpeech, type SpokenResult } from "./audio";
 
 /* ------------------------------------------------ selection ---- */
@@ -291,14 +291,17 @@ class StudioRuntime {
     this.saveTimer = window.setTimeout(() => this.saveNow(), 700);
   }
 
-  saveNow() {
+  async saveNow() {
     try {
+      this.state = { ...this.state, saveStatus: "saving" };
+      this.emit();
+      const project = await materializeProjectImages(this.state.project);
       const savedAt = writeFilm({
         players: this.state.players,
-        project: this.state.project,
+        project,
         ttsProvider: this.state.ttsProvider,
       });
-      this.state = { ...this.state, saveStatus: "saved", lastSavedAt: savedAt, lastError: this.state.lastError };
+      this.state = { ...this.state, project, saveStatus: "saved", lastSavedAt: savedAt };
       this.emit();
     } catch {
       this.state = { ...this.state, saveStatus: "error", lastError: "Could not save. Storage may be full." };
@@ -541,6 +544,16 @@ class StudioRuntime {
         image: { ...doc.image, current: rev, history: [doc.image.current, ...doc.image.history].slice(0, 12) },
       }),
       mutation(op, sceneId, ["image"], cost, rev.source, note)
+    );
+  }
+
+  applyImageUrl(sceneId: string, url: string, note = "library still") {
+    this.pushImage(
+      sceneId,
+      makeImageRevision(url, "seed", "library", note),
+      "image.library",
+      "free",
+      "still swapped — bubbles, names and voices kept"
     );
   }
 
