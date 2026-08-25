@@ -289,6 +289,39 @@ export function browserVoices(): SpeechSynthesisVoice[] {
 }
 
 /** Best-effort match: exact locale → language family → gender hint. */
+/** No TTS engine has a native Pidgin locale. Closest usable English: en-NG, then West African, then UK. */
+export const PIDGIN_SAMPLE = "Omo, we don win am! Make we just start this thing abeg.";
+
+export function scorePidginVoice(v: { name: string; lang: string }, gender: "male" | "female" | "neutral" = "male"): number {
+  const lang = v.lang.toLowerCase().replace("_", "-");
+  const name = v.name.toLowerCase();
+  let s = 0;
+  if (lang.startsWith("en-ng") || /nigeria|naija|abeo|ezinne/.test(name)) s += 120;
+  else if (lang.startsWith("en-gh") || lang.startsWith("en-ke") || lang.startsWith("en-za") || lang.startsWith("en-tz")) s += 75;
+  else if (lang.startsWith("en-jm") || lang.startsWith("en-tt") || /jamaica|caribbean/.test(name)) s += 58;
+  else if (lang.startsWith("en-gb") || /uk english|british|daniel|george|hazel|susan|ravi/.test(name)) s += 42;
+  else if (lang.startsWith("en-ie") || lang.startsWith("en-au")) s += 22;
+  else if (lang.startsWith("en-us") || /us english|american|zira|david|mark|samantha/.test(name)) s += 8;
+  if (gender === "female" && /female|zira|hazel|susan|karen|samantha|ezinne|tessa/.test(name)) s += 10;
+  if (gender === "male" && /male|daniel|david|george|fred|abeo|ravi|thomas/.test(name)) s += 10;
+  if (/online|natural|neural|premium/.test(name)) s += 6;
+  return s;
+}
+
+export function pickPidginVoice<T extends { name: string; lang: string }>(
+  voices: T[],
+  gender: "male" | "female" | "neutral" = "male"
+): T | undefined {
+  if (!voices.length) return undefined;
+  return [...voices].sort((a, b) => scorePidginVoice(b, gender) - scorePidginVoice(a, gender))[0];
+}
+
+export function pidginVoiceTune(gender: "male" | "female" | "neutral"): { speed: number; pitch: number } {
+  if (gender === "female") return { speed: 0.94, pitch: 1.02 };
+  if (gender === "neutral") return { speed: 0.9, pitch: 0.88 };
+  return { speed: 0.96, pitch: 1.04 };
+}
+
 export function findVoiceByName(name: string): SpeechSynthesisVoice | undefined {
   if (!name) return undefined;
   return browserVoices().find((v) => v.name === name);
@@ -313,6 +346,9 @@ export function useBrowserVoices(): SpeechSynthesisVoice[] {
 export function pickBrowserVoice(profile: VoiceProfile): SpeechSynthesisVoice | undefined {
   const voices = browserVoices();
   if (!voices.length) return undefined;
+  if (profile.language === "en-NG" || /pidgin|naija|nigeria/i.test(profile.language_label)) {
+    return pickPidginVoice(voices, profile.gender === "neutral" ? "male" : profile.gender);
+  }
   const wants = profile.voice_id.replace("auto:", "").split("|");
 
   for (const want of wants) {

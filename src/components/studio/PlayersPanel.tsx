@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Mic, Plus, Save, Trash2, Volume2 } from "lucide-react";
 import { studio, useStudio, type PlayerTeam } from "../../engine/motion/studio";
-import { useBrowserVoices } from "../../engine/motion/tts";
+import { pickPidginVoice, scorePidginVoice, useBrowserVoices } from "../../engine/motion/tts";
 import { Card } from "../ui";
 
 const TEAMS: { id: PlayerTeam; label: string }[] = [
@@ -17,12 +17,21 @@ export default function PlayersPanel() {
   const [team, setTeam] = useState<PlayerTeam>("city");
   const [voiceName, setVoiceName] = useState("");
 
+  const best = useMemo(() => pickPidginVoice(voices, "male"), [voices]);
+  const ranked = useMemo(
+    () => [...voices].sort((a, b) => scorePidginVoice(b, "male") - scorePidginVoice(a, "male")),
+    [voices]
+  );
+  const pidginSet = useMemo(() => new Set(ranked.slice(0, 6).map((v) => v.name)), [ranked]);
+
   useEffect(() => {
     if (voices.length) studio.hydrateDefaultVoices(voices.map((v) => ({ name: v.name, lang: v.lang })));
   }, [voices.length]);
 
   const add = () => {
-    const created = studio.addPlayer(name, { team, voiceName, voiceLang: voices.find((v) => v.name === voiceName)?.lang ?? "en-NG" });
+    const picked = voiceName || best?.name || "";
+    const lang = voices.find((v) => v.name === picked)?.lang ?? "en-NG";
+    const created = studio.addPlayer(name, { team, voiceName: picked, voiceLang: lang, language_label: "Nigerian Pidgin" });
     if (created) setName("");
   };
 
@@ -40,7 +49,7 @@ export default function PlayersPanel() {
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-3 py-2.5">
         <div>
           <p className="text-[13px] font-bold text-bone">Players & voices</p>
-          <p className="font-mono text-[9px] text-faint">type a name · pick a voice · save so it survives refresh</p>
+          <p className="font-mono text-[9px] text-faint">Pidgin is spoken as written — we pick the closest English accent</p>
         </div>
         <div className="flex items-center gap-2">
           <span className={`font-mono text-[9px] ${state.saveStatus === "saved" ? "text-fairway" : state.saveStatus === "error" ? "text-claret" : "text-gold"}`}>
@@ -51,6 +60,30 @@ export default function PlayersPanel() {
             className="flex items-center gap-1.5 rounded-lg bg-fairway px-2.5 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-ink hover:brightness-110"
           >
             <Save size={11} /> Save
+          </button>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-fairway/[0.04] px-3 py-2.5">
+        <p className="max-w-xl text-[12px] leading-relaxed text-bone/80">
+          No TTS speaks native Pidgin. Best English stand-in: <span className="text-fairway">Nigerian English</span> if your
+          browser has it, otherwise <span className="text-city">UK English</span> (slower, not American).{" "}
+          {best ? <>This machine’s pick: <span className="font-semibold text-bone">{best.name}</span>.</> : "Load Chrome/Edge to see voices."}
+        </p>
+        <div className="flex gap-1.5">
+          <button
+            onClick={() => best && studio.previewPidginVoice(best.name, best.lang)}
+            disabled={!best}
+            className="rounded-lg border border-white/15 px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-[0.12em] text-city hover:border-city/50 disabled:opacity-40"
+          >
+            Hear Pidgin sample
+          </button>
+          <button
+            onClick={() => studio.applyPidginVoices(voices.map((v) => ({ name: v.name, lang: v.lang })))}
+            disabled={!voices.length}
+            className="rounded-lg border border-fairway/40 bg-fairway/10 px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-[0.12em] text-fairway hover:bg-fairway/20 disabled:opacity-40"
+          >
+            Use Naija-friendly English
           </button>
         </div>
       </div>
@@ -69,9 +102,11 @@ export default function PlayersPanel() {
         </select>
         <select value={voiceName} onChange={(e) => setVoiceName(e.target.value)}
           className="rounded-lg border border-white/10 bg-ink px-2 py-2 font-mono text-[11px] text-bone outline-none">
-          <option value="">Voice (optional)</option>
-          {voices.map((v) => (
-            <option key={`${v.name}-${v.lang}`} value={v.name}>{v.name} · {v.lang}</option>
+          <option value="">{best ? `Auto · ${best.name}` : "Voice (optional)"}</option>
+          {ranked.map((v) => (
+            <option key={`${v.name}-${v.lang}`} value={v.name}>
+              {pidginSet.has(v.name) ? "★ " : ""}{v.name} · {v.lang}
+            </option>
           ))}
         </select>
         <button onClick={add}
@@ -82,7 +117,7 @@ export default function PlayersPanel() {
 
       {!voices.length && (
         <p className="border-b border-line px-3 py-2 font-mono text-[10px] text-gold">
-          This browser hasn’t listed voices yet — click anywhere, then reopen this list. Chrome/Edge work best.
+          This browser hasn’t listed voices yet — click anywhere, then try again. Chrome or Edge on desktop is best.
         </p>
       )}
 
@@ -107,12 +142,14 @@ export default function PlayersPanel() {
               className="rounded border border-white/10 bg-ink px-1 py-1 font-mono text-[10px] text-bone outline-none"
             >
               <option value="">Default system voice</option>
-              {voices.map((v) => (
-                <option key={`${p.id}-${v.name}`} value={v.name}>{v.name}</option>
+              {ranked.map((v) => (
+                <option key={`${p.id}-${v.name}`} value={v.name}>
+                  {pidginSet.has(v.name) ? "★ " : ""}{v.name}
+                </option>
               ))}
             </select>
             <div className="flex gap-1">
-              <button onClick={() => studio.previewPlayer(p.id)} title="Hear this voice"
+              <button onClick={() => studio.previewPlayer(p.id)} title="Hear Pidgin on this voice"
                 className="grid h-8 w-8 place-items-center rounded border border-white/10 text-city hover:border-city/50">
                 {p.voiceName ? <Volume2 size={13} /> : <Mic size={13} />}
               </button>

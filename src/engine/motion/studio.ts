@@ -19,7 +19,7 @@ import {
 } from "./document";
 import { FOCUS_HINTS } from "./timeline";
 import { ASPECTS, SFX_LIBRARY, type AspectSpec, type BubbleStyle, type CameraMove, type MotionTimeline, type RenderStatus, type SfxId, type TTSProviderId, type TransitionKind } from "./types";
-import { TTS_PROVIDERS, cacheKey, estimateDuration, resolveVoice, voiceProfile } from "./tts";
+import { TTS_PROVIDERS, cacheKey, estimateDuration, pickPidginVoice, pidginVoiceTune, PIDGIN_SAMPLE, resolveVoice, voiceProfile } from "./tts";
 import { fromLegacy, sportsCharacter } from "./sportsbible";
 import { IMAGE_EDIT_PROVIDERS, measureAudio, type ImageEditProviderId, type UserAudioResult } from "./editProviders";
 import { SEED_PLAYERS, newPlayerId, playerByName, type Player } from "./players";
@@ -1175,12 +1175,44 @@ class StudioRuntime {
   previewPlayer(id: string) {
     const p = this.state.players.find((x) => x.id === id);
     if (!p) return;
-    speakText(`My name is ${p.name}. Omo, we don win am!`, {
+    const pidgin = /pidgin|naija|nigeria/i.test(p.language_label) || p.voiceLang.toLowerCase().startsWith("en-ng");
+    speakText(pidgin ? PIDGIN_SAMPLE : `My name is ${p.name}. We go win am today.`, {
       voiceName: p.voiceName,
-      lang: p.voiceLang,
+      lang: p.voiceLang || "en-NG",
       rate: p.speed,
       pitch: p.pitch,
     });
+  }
+
+  previewPidginVoice(voiceName: string, lang: string) {
+    speakText(PIDGIN_SAMPLE, { voiceName, lang: lang || "en-NG", rate: 0.96, pitch: 1.04 });
+  }
+
+  applyPidginVoices(voices: { name: string; lang: string }[]) {
+    if (!voices.length) {
+      this.setPartial({ lastError: "No browser voices yet. Use Chrome or Edge, then try again." });
+      return;
+    }
+    const players = this.state.players.map((p) => {
+      const pidgin = /pidgin|naija|nigeria/i.test(p.language_label) || p.team === "city" || p.id === "pl_nar" || p.id === "pl_crd";
+      if (!pidgin) return p;
+      const hit = pickPidginVoice(voices, p.gender);
+      if (!hit) return p;
+      const tune = pidginVoiceTune(p.gender);
+      return {
+        ...p,
+        voiceName: hit.name,
+        voiceLang: hit.lang || "en-NG",
+        speed: tune.speed,
+        pitch: tune.pitch,
+        language_label: p.language_label.includes("English") && p.id === "pl_nar" ? "Nigerian English" : "Nigerian Pidgin",
+      };
+    });
+    this.state = { ...this.state, players, saveStatus: "unsaved" };
+    this.emit();
+    this.armSave();
+    const sample = players.find((p) => p.id === "pl_mid") ?? players[0];
+    if (sample) this.previewPlayer(sample.id);
   }
 
   stopVoices() {
