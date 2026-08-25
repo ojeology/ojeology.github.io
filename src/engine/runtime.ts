@@ -88,6 +88,8 @@ export const PROJECT: Project = {
       dialogue: [
         { speaker: "Narrator", text: "Ninety minutes. Two teams. One storyline.", kind: "narration" },
         { speaker: "City Captain", text: "Make we just start this thing abeg.", kind: "speech", language: "Nigerian Pidgin" },
+        { speaker: "Keeper", text: "You go try. You no go score today.", kind: "speech" },
+        { speaker: "City Midfielder", text: "Relax my guy. Today na our day.", kind: "speech", language: "Nigerian Pidgin" },
       ],
       character_ids: ["city-creative-midfielder", "bou-keeper-01"],
       aspect_ratio: "16:9", status: "completed",
@@ -99,7 +101,9 @@ export const PROJECT: Project = {
       event: { minute: "34", type: "save", team: "Bournemouth", player: "Shot-Stopper Keeper" },
       dialogue: [
         { speaker: "Keeper", text: "NOT TODAY! You hear me?! NOT TODAY!", kind: "speech" },
+        { speaker: "City Midfielder", text: "Ah! How this man take reach there?!", kind: "speech", language: "Nigerian Pidgin" },
         { speaker: "Commentator", text: "That is simply outrageous goalkeeping.", kind: "commentary" },
+        { speaker: "Crowd", text: "KEEPER! KEEPER!", kind: "crowd" },
       ],
       character_ids: ["bou-keeper-01", "city-creative-midfielder"],
       aspect_ratio: "16:9", status: "completed",
@@ -111,7 +115,9 @@ export const PROJECT: Project = {
       event: { minute: "58", type: "var", team: "Manchester City", player: "Creative Midfielder" },
       dialogue: [
         { speaker: "City Midfielder", text: "Ref abeg, na handball! Everybody see am!", kind: "speech", language: "Nigerian Pidgin" },
+        { speaker: "Keeper", text: "You dey dream. Play on!", kind: "speech" },
         { speaker: "Crowd", text: "V! A! R! V! A! R!", kind: "crowd" },
+        { speaker: "Commentator", text: "The earpiece is buzzing. The whole stadium has lost its mind.", kind: "commentary" },
       ],
       character_ids: ["city-creative-midfielder", "bou-keeper-01"],
       aspect_ratio: "16:9", status: "completed",
@@ -132,7 +138,11 @@ export const PROJECT: Project = {
       id: "panel-21", number: 21, title: "Limbs in the Away End",
       scene: "the away end detonates — strangers on strangers' shoulders, scarves everywhere, one steward quietly smiling",
       event: { minute: "90+2", type: "crowd_reaction", team: "Manchester City" },
-      dialogue: [{ speaker: "Crowd", text: "WE GO WIN AM! WE GO WIN AM!", kind: "crowd", language: "Nigerian Pidgin" }],
+      dialogue: [
+        { speaker: "Crowd", text: "WE GO WIN AM! WE GO WIN AM!", kind: "crowd", language: "Nigerian Pidgin" },
+        { speaker: "Narrator", text: "Limbs. Scarves. Strangers hugging strangers.", kind: "narration" },
+        { speaker: "City Captain", text: "This one na for the fans. Una too much.", kind: "speech", language: "Nigerian Pidgin" },
+      ],
       character_ids: [],
       aspect_ratio: "16:9", status: "completed",
       image_url: "/panels/panel-21-crowd.jpg", last_generation_id: "gen_9021cc",

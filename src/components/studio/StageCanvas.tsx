@@ -18,11 +18,15 @@ interface Props {
   showBoxes: boolean;
   muted: boolean;
   selectedBubble: string | null;
+  /** When true (paused), every bubble in the current scene is visible and draggable. */
+  editMode?: boolean;
+  cinematic?: boolean;
   onTime: (t: number) => void;
   onEnded: () => void;
   onPickBubble: (sceneId: string, bubbleId: string | null) => void;
   onMoveBubble: (sceneId: string, bubbleId: string, x: number, y: number) => void;
   onResizeBubble: (sceneId: string, bubbleId: string, width: number) => void;
+  onEditText?: (sceneId: string, bubbleId: string, text: string) => void;
 }
 
 interface HitBox {
@@ -43,11 +47,13 @@ const FONTS = {
 const StageCanvas = forwardRef<StageHandle, Props>(function StageCanvas(
   {
     timeline, docs, aspect, time, playing, showSafe, showBoxes, muted, selectedBubble,
-    onTime, onEnded, onPickBubble, onMoveBubble, onResizeBubble,
+    editMode = true, cinematic = true,
+    onTime, onEnded, onPickBubble, onMoveBubble, onResizeBubble, onEditText,
   },
   ref
 ) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
   const images = useRef(new Map<string, HTMLImageElement>());
   const fired = useRef(new Set<string>());
   const players = useRef(new Map<string, HTMLAudioElement>());
@@ -56,27 +62,38 @@ const StageCanvas = forwardRef<StageHandle, Props>(function StageCanvas(
   const last = useRef(0);
   const tRef = useRef(time);
   const drag = useRef<{ id: string; scene: string; mode: "move" | "resize"; dx: number; dy: number } | null>(null);
+  const dragPos = useRef<{ id: string; x: number; y: number; width?: number } | null>(null);
+  const drawRef = useRef<(t: number) => void>(() => undefined);
   const [cursor, setCursor] = useState<"default" | "grab" | "grabbing" | "ew-resize">("default");
+  const [editing, setEditing] = useState<{
+    sceneId: string; bubbleId: string; text: string; left: number; top: number; width: number; height: number;
+  } | null>(null);
   const spec = ASPECTS[aspect];
   tRef.current = time;
 
-  /* ---------- preload ---------- */
   const sources = useMemo(() => {
     const s = new Set<string>();
     timeline.scenes.forEach((sc) => sc.image_url && s.add(sc.image_url));
+    docs.forEach((d) => d.image.current.url && s.add(d.image.current.url));
     return [...s];
-  }, [timeline]);
+  }, [timeline, docs]);
 
   useEffect(() => {
     sources.forEach((src) => {
       if (images.current.has(src)) return;
       const img = new Image();
+      img.onload = () => drawRef.current(tRef.current);
       img.src = src;
       images.current.set(src, img);
     });
   }, [sources]);
 
-  /* ---------- draw ---------- */
+  const applyDrag = (layer: BubbleLayer): BubbleLayer => {
+    const d = dragPos.current;
+    if (!d || d.id !== layer.id) return layer;
+    return { ...layer, x: d.x, y: d.y, width: d.width ?? layer.width };
+  };
+
   const draw = useCallback(
     (t: number) => {
       const canvas = canvasRef.current;
@@ -87,7 +104,7 @@ const StageCanvas = forwardRef<StageHandle, Props>(function StageCanvas(
       hitboxes.current = [];
 
       ctx.clearRect(0, 0, W, H);
-      ctx.fillStyle = "#07090A";
+      ctx.fillStyle = "#050607";
       ctx.fillRect(0, 0, W, H);
 
       const found = sceneAt(timeline, t);
@@ -96,47 +113,81 @@ const StageCanvas = forwardRef<StageHandle, Props>(function StageCanvas(
       const doc = docs.find((d) => d.id === scene.id);
 
       const camEl = scene.elements.find((e) => e.type === "camera");
-      const cam = camEl?.camera ? sampleCamera(camEl.camera, local) : { scale: 1.05, x: 0.5, y: 0.5 };
+      const cam = camEl?.camera ? sampleCamera(camEl.camera, local) : { scale: 1.08, x: 0.5, y: 0.5 };
       const jit = camEl?.camera ? shakeOffset(camEl.camera, local) : { dx: 0, dy: 0 };
 
-      const img = scene.image_url ? images.current.get(scene.image_url) : undefined;
+      const imgUrl = doc?.image.current.url || scene.image_url;
+      const img = imgUrl ? images.current.get(imgUrl) : undefined;
       if (img?.complete && img.naturalWidth) {
         drawCropped(ctx, img, W, H, cam, jit);
       } else {
         ctx.fillStyle = "#12160F";
         ctx.fillRect(0, 0, W, H);
-        ctx.fillStyle = "#4A5348";
-        ctx.font = '500 20px "JetBrains Mono", monospace';
+        ctx.fillStyle = "#6A7368";
+        ctx.font = '600 18px "Space Grotesk", sans-serif';
         ctx.textAlign = "center";
-        ctx.fillText(scene.image_url ? "loading artwork…" : "no image asset", W / 2, H / 2);
+        ctx.fillText(imgUrl ? "Loading the frame…" : "Drop an image onto this scene", W / 2, H / 2);
       }
 
+      if (cinematic) paintVignette(ctx, W, H);
+
       const trans = scene.elements.find((e) => e.type === "transition");
-      if (trans && local >= trans.start) {
+      if (trans && local >= trans.start && playing) {
         paintTransition(ctx, W, H, trans.transition ?? "crossfade", (local - trans.start) / Math.max(0.001, trans.end - trans.start));
       }
       const idx = timeline.scenes.findIndex((s) => s.id === scene.id);
-      if (idx > 0 && local < 0.35) {
+      if (playing && idx > 0 && local < 0.35) {
         paintTransition(ctx, W, H, timeline.scenes[idx - 1].transition_out, 1 - local / 0.35, true);
       }
 
-      for (const el of scene.elements) {
-        if (el.type !== "speech_bubble") continue;
-        const layer = doc?.bubbles.find((b) => b.id === el.id);
-        if (!layer) continue;
-        const live = local >= el.start && local <= el.end;
-        const selected = selectedBubble === el.id;
-        if (!live && !selected && !showBoxes) continue;
-        const box = paintBubble(ctx, el, layer, local, W, H, spec, live, selected, !live);
-        if (box) hitboxes.current.push({ bubbleId: el.id, sceneId: scene.id, ...box });
+      const editingNow = editMode && !playing;
+
+      if (doc) {
+        for (const layer of doc.bubbles) {
+          if (!layer.visible) continue;
+          const el = scene.elements.find((e) => e.id === layer.id);
+          const line = doc.dialogue.find((l) => l.bubble_id === layer.id);
+          const live = el ? local >= el.start && local <= el.end : false;
+          const selected = selectedBubble === layer.id;
+          if (!editingNow && !live && !selected && !showBoxes) continue;
+          const ghost = !editingNow && !live && !selected;
+          const fake: TimelineElement = el ?? {
+            id: layer.id,
+            type: "speech_bubble",
+            start: 0,
+            end: 99,
+            speaker: line?.speaker_label,
+            text: line?.text ?? "",
+            bubble_style: layer.style,
+            anim_in: layer.anim_in,
+            anim_out: layer.anim_out,
+          };
+          const painted = paintBubble(
+            ctx,
+            { ...fake, text: line?.text ?? fake.text, speaker: line?.speaker_label ?? fake.speaker },
+            applyDrag(layer),
+            local,
+            W, H, spec,
+            editingNow || live,
+            selected,
+            ghost,
+            editingNow
+          );
+          if (painted) hitboxes.current.push({ bubbleId: layer.id, sceneId: scene.id, ...painted });
+        }
       }
 
+      if (cinematic) {
+        paintLetterbox(ctx, W, H);
+        paintLowerThird(ctx, W, H, scene, doc);
+      }
       if (showSafe) paintSafe(ctx, W, H, spec);
     },
-    [timeline, docs, spec, showSafe, showBoxes, selectedBubble]
+    [timeline, docs, spec, showSafe, showBoxes, selectedBubble, editMode, playing, cinematic]
   );
 
-  /* ---------- audio ---------- */
+  drawRef.current = draw;
+
   const fireAudio = useCallback(
     (scene: Scene, local: number) => {
       if (muted) return;
@@ -158,7 +209,6 @@ const StageCanvas = forwardRef<StageHandle, Props>(function StageCanvas(
 
         duck(0.4, 420);
         if (voice.url) {
-          // real audio file — user upload, recording, or a provider that returns files
           const a = new Audio(voice.url);
           a.volume = Math.max(0, Math.min(1, voice.gain));
           a.playbackRate = Math.max(0.5, Math.min(2, voice.speed));
@@ -177,13 +227,10 @@ const StageCanvas = forwardRef<StageHandle, Props>(function StageCanvas(
 
   const hush = useCallback(() => {
     stopSpeech();
-    players.current.forEach((a) => {
-      a.pause();
-    });
+    players.current.forEach((a) => a.pause());
     players.current.clear();
   }, []);
 
-  /* ---------- loop ---------- */
   useEffect(() => {
     if (!playing) return;
     last.current = performance.now();
@@ -227,7 +274,6 @@ const StageCanvas = forwardRef<StageHandle, Props>(function StageCanvas(
 
   useEffect(() => () => hush(), [hush]);
 
-  /* ---------- pointer interaction ---------- */
   const toLocal = (e: React.PointerEvent) => {
     const c = canvasRef.current!;
     const r = c.getBoundingClientRect();
@@ -243,6 +289,7 @@ const StageCanvas = forwardRef<StageHandle, Props>(function StageCanvas(
   };
 
   const onPointerDown = (e: React.PointerEvent) => {
+    if (playing || editing) return;
     const { x, y } = toLocal(e);
     const hit = hitTest(x, y);
     if (!hit) {
@@ -251,7 +298,9 @@ const StageCanvas = forwardRef<StageHandle, Props>(function StageCanvas(
     }
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
     onPickBubble(hit.sceneId, hit.bubbleId);
-    const onHandle = x > hit.x + hit.w - 18 && y > hit.y + hit.h - 18;
+    const onHandle = x > hit.x + hit.w - 22 && y > hit.y + hit.h - 22;
+    const doc = docs.find((d) => d.id === hit.sceneId);
+    const layer = doc?.bubbles.find((b) => b.id === hit.bubbleId);
     drag.current = {
       id: hit.bubbleId,
       scene: hit.sceneId,
@@ -259,36 +308,80 @@ const StageCanvas = forwardRef<StageHandle, Props>(function StageCanvas(
       dx: x - (hit.x + hit.w / 2),
       dy: y - (hit.y + hit.h / 2),
     };
+    dragPos.current = { id: hit.bubbleId, x: layer?.x ?? 0.5, y: layer?.y ?? 0.25, width: layer?.width };
     setCursor(onHandle ? "ew-resize" : "grabbing");
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
     const c = canvasRef.current;
-    if (!c) return;
+    if (!c || playing) return;
     const { x, y } = toLocal(e);
     if (!drag.current) {
       const hit = hitTest(x, y);
-      setCursor(hit ? (x > hit.x + hit.w - 18 && y > hit.y + hit.h - 18 ? "ew-resize" : "grab") : "default");
+      setCursor(hit ? (x > hit.x + hit.w - 22 && y > hit.y + hit.h - 22 ? "ew-resize" : "grab") : "default");
       return;
     }
     const d = drag.current;
     if (d.mode === "move") {
-      onMoveBubble(d.scene, d.id, clamp01((x - d.dx) / c.width), clamp01((y - d.dy) / c.height));
+      dragPos.current = {
+        id: d.id,
+        x: clamp01((x - d.dx) / c.width),
+        y: clamp01((y - d.dy) / c.height),
+        width: dragPos.current?.width,
+      };
     } else {
       const box = hitboxes.current.find((b) => b.bubbleId === d.id);
       if (box) {
-        const w = Math.max(0.15, Math.min(0.92, ((x - box.x) * 2) / c.width));
-        onResizeBubble(d.scene, d.id, w);
+        const w = Math.max(0.18, Math.min(0.9, (x - box.x) / c.width));
+        dragPos.current = { id: d.id, x: dragPos.current?.x ?? 0.5, y: dragPos.current?.y ?? 0.25, width: w };
       }
     }
+    draw(tRef.current);
   };
 
   const onPointerUp = () => {
+    const d = drag.current;
+    const pos = dragPos.current;
+    if (d && pos) {
+      if (d.mode === "move") onMoveBubble(d.scene, d.id, pos.x, pos.y);
+      else if (pos.width != null) onResizeBubble(d.scene, d.id, pos.width);
+    }
     drag.current = null;
+    dragPos.current = null;
     setCursor("default");
   };
 
-  /* ---------- export ---------- */
+  const onDoubleClick = (e: React.MouseEvent) => {
+    if (playing || !onEditText) return;
+    const c = canvasRef.current;
+    const wrap = wrapRef.current;
+    if (!c || !wrap) return;
+    const r = c.getBoundingClientRect();
+    const x = ((e.clientX - r.left) / r.width) * c.width;
+    const y = ((e.clientY - r.top) / r.height) * c.height;
+    const hit = hitTest(x, y);
+    if (!hit) return;
+    const doc = docs.find((d) => d.id === hit.sceneId);
+    const line = doc?.dialogue.find((l) => l.bubble_id === hit.bubbleId);
+    const wr = wrap.getBoundingClientRect();
+    setEditing({
+      sceneId: hit.sceneId,
+      bubbleId: hit.bubbleId,
+      text: line?.text ?? "",
+      left: (hit.x / c.width) * wr.width,
+      top: (hit.y / c.height) * wr.height,
+      width: Math.max(140, (hit.w / c.width) * wr.width),
+      height: Math.max(44, (hit.h / c.height) * wr.height),
+    });
+    onPickBubble(hit.sceneId, hit.bubbleId);
+  };
+
+  const commitEdit = () => {
+    if (!editing) return;
+    onEditText?.(editing.sceneId, editing.bubbleId, editing.text);
+    setEditing(null);
+  };
+
   useImperativeHandle(ref, () => ({
     exportVideo: async (onProgress) => {
       const canvas = canvasRef.current;
@@ -333,26 +426,51 @@ const StageCanvas = forwardRef<StageHandle, Props>(function StageCanvas(
   }));
 
   return (
-    <canvas
-      ref={canvasRef}
-      width={Math.round(spec.width / 2)}
-      height={Math.round(spec.height / 2)}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
-      style={{ cursor }}
-      className="h-full w-full touch-none object-contain"
-    />
+    <div ref={wrapRef} className="relative h-full w-full">
+      <canvas
+        ref={canvasRef}
+        width={Math.round(spec.width / 2)}
+        height={Math.round(spec.height / 2)}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        onDoubleClick={onDoubleClick}
+        style={{ cursor: playing ? "default" : cursor }}
+        className="h-full w-full touch-none object-contain"
+      />
+      {editing && (
+        <textarea
+          autoFocus
+          value={editing.text}
+          onChange={(e) => setEditing({ ...editing, text: e.target.value })}
+          onBlur={commitEdit}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setEditing(null);
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              commitEdit();
+            }
+          }}
+          className="absolute z-10 resize-none rounded-md border-2 border-fairway bg-[#F7F5EF] p-2 text-[13px] font-semibold leading-snug text-[#12140F] shadow-xl outline-none"
+          style={{ left: editing.left, top: editing.top, width: editing.width, minHeight: editing.height }}
+        />
+      )}
+      {editMode && !playing && !editing && (
+        <div className="pointer-events-none absolute bottom-2 left-2 right-2 flex justify-center">
+          <span className="rounded-full bg-black/70 px-3 py-1 font-mono text-[9px] uppercase tracking-[0.18em] text-bone/80">
+            Drag a bubble · double-click to rewrite the line
+          </span>
+        </div>
+      )}
+    </div>
   );
 });
 
 export default StageCanvas;
 
-/* ================================ painters ==================== */
-
 function clamp01(v: number) {
-  return Math.max(0.04, Math.min(0.96, v));
+  return Math.max(0.06, Math.min(0.94, v));
 }
 
 function drawCropped(
@@ -379,6 +497,42 @@ function drawCropped(
   sx = Math.max(0, Math.min(iw - cw, sx));
   sy = Math.max(0, Math.min(ih - chh, sy));
   ctx.drawImage(img, sx, sy, cw, chh, 0, 0, W, H);
+}
+
+function paintVignette(ctx: CanvasRenderingContext2D, W: number, H: number) {
+  const g = ctx.createRadialGradient(W / 2, H * 0.48, Math.min(W, H) * 0.28, W / 2, H / 2, Math.max(W, H) * 0.72);
+  g.addColorStop(0, "rgba(0,0,0,0)");
+  g.addColorStop(1, "rgba(0,0,0,0.5)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+}
+
+function paintLetterbox(ctx: CanvasRenderingContext2D, W: number, H: number) {
+  const bar = Math.round(H * 0.065);
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, W, bar);
+  ctx.fillRect(0, H - bar, W, bar);
+}
+
+function paintLowerThird(ctx: CanvasRenderingContext2D, W: number, H: number, scene: Scene, doc?: SceneDocument) {
+  const bar = H * 0.065;
+  ctx.save();
+  ctx.fillStyle = "rgba(0,0,0,0.55)";
+  ctx.fillRect(0, H - bar - 36, W * 0.46, 28);
+  ctx.fillStyle = "#3DD68C";
+  ctx.fillRect(0, H - bar - 36, 3, 28);
+  ctx.fillStyle = "#EEF2EA";
+  ctx.font = '700 13px "Space Grotesk", sans-serif';
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  const minute = (doc as SceneDocument & { event_type?: string })?.event_type ? String(scene.event_type ?? "").replace(/_/g, " ") : "";
+  ctx.fillText(`S${String(scene.panel_number).padStart(2, "0")}  ${scene.title}`, 12, H - bar - 22);
+  if (minute) {
+    ctx.fillStyle = "#6CB4EE";
+    ctx.font = '600 9px "JetBrains Mono", monospace';
+    ctx.fillText(minute.toUpperCase(), 12, H - bar - 10);
+  }
+  ctx.restore();
 }
 
 function paintTransition(ctx: CanvasRenderingContext2D, W: number, H: number, kind: string, p: number, incoming = false) {
@@ -413,22 +567,24 @@ function paintBubble(
   local: number,
   W: number,
   H: number,
-  spec: AspectSpec,
+  _spec: AspectSpec,
   live: boolean,
   selected: boolean,
-  ghost: boolean
+  ghost: boolean,
+  editMode = false
 ): { x: number; y: number; w: number; h: number } | null {
+  void _spec;
   const IN = 0.28;
   const OUT = 0.22;
-  const inP = live ? Math.min(1, (local - el.start) / IN) : 1;
+  const inP = live && !editMode ? Math.min(1, (local - el.start) / IN) : 1;
   const outStart = el.end - OUT;
-  const outP = live && local > outStart ? Math.min(1, (local - outStart) / OUT) : 0;
+  const outP = live && !editMode && local > outStart ? Math.min(1, (local - outStart) / OUT) : 0;
 
   let scale = 1;
   let alpha = 1;
   let dx = 0;
   let dy = 0;
-  if (live) {
+  if (live && !editMode) {
     switch (layer.anim_in) {
       case "pop_in": scale = 0.86 + 0.14 * easeOutBack(inP); alpha = Math.min(1, inP * 1.6); break;
       case "bounce_in": scale = 0.9 + 0.1 * easeOutBack(inP); dy = (1 - easeOutBack(inP)) * -16; alpha = Math.min(1, inP * 1.8); break;
@@ -441,7 +597,7 @@ function paintBubble(
       alpha *= 1 - outP;
     }
   }
-  if (ghost) alpha = 0.24;
+  if (ghost) alpha = 0.28;
   if (alpha <= 0.02 && !selected) return null;
 
   const ref = W / 960;
@@ -456,11 +612,10 @@ function paintBubble(
   const boxW = textW + padX * 2;
   const boxH = lines.length * lineH + padY * 2;
 
-  const s = spec.safe;
   let cx = layer.x * W + dx;
   let cy = layer.y * H + dy;
-  cx = Math.max(W * s.left + boxW / 2, Math.min(W * (1 - s.right) - boxW / 2, cx));
-  cy = Math.max(H * s.top + boxH / 2, Math.min(H * (1 - s.bottom) - boxH / 2, cy));
+  cx = Math.max(boxW / 2 + 8, Math.min(W - boxW / 2 - 8, cx));
+  cy = Math.max(boxH / 2 + 18, Math.min(H - boxH / 2 - 18, cy));
   const bx = cx - boxW / 2;
   const by = cy - boxH / 2;
 
@@ -470,13 +625,13 @@ function paintBubble(
   ctx.scale(scale, scale);
   ctx.translate(-boxW / 2, -boxH / 2);
 
-  ctx.shadowColor = "rgba(0,0,0,0.4)";
-  ctx.shadowBlur = 14 * ref;
+  ctx.shadowColor = "rgba(0,0,0,0.45)";
+  ctx.shadowBlur = 16 * ref;
   ctx.shadowOffsetY = 5 * ref;
   const r = layer.style === "narration" || layer.style === "commentator" ? 5 * ref : 15 * ref;
   ctx.fillStyle = layer.fill;
-  ctx.strokeStyle = layer.stroke;
-  ctx.lineWidth = Math.max(1.6, 2.2 * ref);
+  ctx.strokeStyle = selected ? "#3DD68C" : layer.stroke;
+  ctx.lineWidth = Math.max(1.6, (selected ? 3 : 2.2) * ref);
   if (layer.style === "shout") spiky(ctx, boxW, boxH, 12 * ref);
   else rounded(ctx, 0, 0, boxW, boxH, r);
   ctx.fill();
@@ -505,7 +660,7 @@ function paintBubble(
     ctx.font = `700 ${lf}px ${FONTS.mono}`;
     const label = el.speaker.toUpperCase();
     const lw = ctx.measureText(label).width + 12 * ref;
-    ctx.fillStyle = layer.stroke;
+    ctx.fillStyle = selected ? "#3DD68C" : layer.stroke;
     rounded(ctx, padX * 0.35, -9 * ref, lw, 16 * ref, 4 * ref);
     ctx.fill();
     ctx.fillStyle = layer.fill;
@@ -530,7 +685,13 @@ function paintBubble(
     ctx.strokeRect(bx - 4, by - 4, boxW + 8, boxH + 8);
     ctx.setLineDash([]);
     ctx.fillStyle = "#3DD68C";
-    ctx.fillRect(bx + boxW - 8, by + boxH - 8, 12, 12);
+    ctx.fillRect(bx + boxW - 6, by + boxH - 6, 14, 14);
+    ctx.strokeStyle = "#0B0E0C";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(bx + boxW + 2, by + boxH - 2);
+    ctx.lineTo(bx + boxW + 8, by + boxH + 8);
+    ctx.stroke();
     ctx.restore();
   }
 
@@ -587,4 +748,3 @@ function pickMime(): string {
   }
   return "video/webm";
 }
-

@@ -137,6 +137,8 @@ export default function Studio() {
                   showBoxes={boxes}
                   muted={muted}
                   selectedBubble={selBubble}
+                  editMode={!playing}
+                  cinematic
                   onTime={setTime}
                   onEnded={() => setPlaying(false)}
                   onPickBubble={(sceneId, bubbleId) =>
@@ -144,6 +146,11 @@ export default function Studio() {
                   }
                   onMoveBubble={(s, id, x, y) => studio.updateBubble(s, id, { x, y }, "bubble.move")}
                   onResizeBubble={(s, id, w) => studio.updateBubble(s, id, { width: w }, "bubble.resize")}
+                  onEditText={(s, bubbleId, text) => {
+                    const scene = state.project.scenes.find((d) => d.id === s);
+                    const line = scene?.dialogue.find((l) => l.bubble_id === bubbleId);
+                    if (line) studio.editDialogueText(s, line.id, text);
+                  }}
                 />
               </div>
             </div>

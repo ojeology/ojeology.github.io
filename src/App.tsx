@@ -21,7 +21,7 @@ import MotionEditor from "./components/MotionEditor";
 import Studio from "./components/Studio";
 import { PROJECT, useJobs } from "./engine/runtime";
 
-type ViewId = "console" | "motion" | "studio" | "bibles" | "jobs" | "docs" | "source";
+type ViewId = "motion" | "studio" | "console" | "bibles" | "jobs" | "docs" | "source";
 
 /* surface render crashes instead of a blank screen */
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
@@ -55,9 +55,9 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
 }
 
 const VIEWS: { id: ViewId; label: string; icon: typeof Zap; hint: string }[] = [
+  { id: "motion", label: "Video", icon: Clapperboard, hint: "edit the film" },
+  { id: "studio", label: "Studio", icon: SlidersHorizontal, hint: "layers · timeline" },
   { id: "console", label: "Console", icon: ScanFace, hint: "compose → render" },
-  { id: "motion", label: "Motion", icon: Clapperboard, hint: "voice · timeline · video" },
-  { id: "studio", label: "Studio", icon: SlidersHorizontal, hint: "non-destructive editor" },
   { id: "bibles", label: "Bibles", icon: BookMarked, hint: "characters · teams · styles" },
   { id: "jobs", label: "Jobs", icon: History, hint: "queue · history · retry" },
   { id: "docs", label: "API", icon: Braces, hint: "REST · errors · health" },
@@ -65,7 +65,7 @@ const VIEWS: { id: ViewId; label: string; icon: typeof Zap; hint: string }[] = [
 ];
 
 export default function App() {
-  const [view, setView] = useState<ViewId>("console");
+  const [view, setView] = useState<ViewId>("motion");
   const jobs = useJobs();
   const runningCount = jobs.filter((j) => ["queued", "processing", "retrying"].includes(j.status)).length;
 
@@ -80,9 +80,9 @@ export default function App() {
           </span>
           <div className="hidden lg:block">
             <div className="font-mono text-[13px] font-bold tracking-[0.12em]">
-              BRYME<span className="text-city">//</span>ENGINE
+              BRYME<span className="text-city">//</span>FILM
             </div>
-            <div className="font-mono text-[8.5px] uppercase tracking-[0.3em] text-faint">image engine v1.0</div>
+            <div className="font-mono text-[8.5px] uppercase tracking-[0.3em] text-faint">match comic studio</div>
           </div>
         </div>
 
@@ -135,14 +135,14 @@ export default function App() {
         <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-line bg-ink/80 px-4 py-2.5 backdrop-blur-md sm:px-6">
           <span className="flex items-center gap-2 rounded-full border border-fairway/25 bg-fairway/[0.07] px-3 py-1">
             <Heart size={11} className="animate-pulse text-fairway" />
-            <span className="font-mono text-[9.5px] tracking-[0.15em] text-fairway">GET /health → 200</span>
+            <span className="font-mono text-[9.5px] tracking-[0.15em] text-fairway">City 1–0 Bournemouth · 90+1'</span>
           </span>
           <span className="hidden rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 font-mono text-[9.5px] tracking-[0.15em] text-dim sm:block">
-            queue: concurrency 2 · retry ×3 · backoff 2ⁿ
+            drag bubbles · type banter · hit play
           </span>
           <span className="ml-auto hidden items-center gap-2 font-mono text-[9.5px] tracking-[0.2em] text-faint md:flex">
-            <span className="h-1.5 w-1.5 rounded-full bg-city" />
-            PYTHON 3.12 · FASTAPI · SQLALCHEMY · POSTGRES
+            <span className="h-1.5 w-1.5 rounded-full bg-fairway" />
+            VIDEO EDITOR · EVERYTHING UNLOCKED
           </span>
         </header>
 
