@@ -23,7 +23,7 @@ import { TTS_PROVIDERS, browserVoices, cacheKey, estimateDuration, pickPidginVoi
 import { fromLegacy, sportsCharacter } from "./sportsbible";
 import { IMAGE_EDIT_PROVIDERS, measureAudio, type ImageEditProviderId, type UserAudioResult } from "./editProviders";
 import { SEED_PLAYERS, newPlayerId, playerByName, type Player } from "./players";
-import { clearFilm, materializeProjectImages, readFilm, writeFilm } from "./persist";
+import { blobToDataUrl, clearFilm, materializeProjectImages, readFilm, writeFilm } from "./persist";
 import { playStudioUrl, speakText, stopSpeech, type SpokenResult } from "./audio";
 import { mergeStudioVoices, studioClipFor } from "./studioBed";
 
@@ -878,15 +878,24 @@ class StudioRuntime {
   }
 
   /** Attach the user's own audio — upload or live recording. */
-  attachUserVoice(sceneId: string, lineId: string, audio: UserAudioResult, source: VoiceSource) {
+  async attachUserVoice(sceneId: string, lineId: string, audio: UserAudioResult, source: VoiceSource) {
     const prev = this.scene(sceneId).voices[lineId];
+    this.setPartial({ busy: "saving your voice…", lastError: null });
+    let url = audio.url;
+    if (url.startsWith("blob:")) {
+      try {
+        url = await blobToDataUrl(url);
+      } catch {
+        /* keep the blob for this session */
+      }
+    }
     const asset: VoiceAsset = {
       id: newId("vox"),
       dialogue_id: lineId,
       source,
       provider: "user",
       voice_profile_id: null,
-      url: audio.url,
+      url,
       duration: audio.duration,
       duration_source: "measured",
       gain: prev?.gain ?? 1,
@@ -894,7 +903,7 @@ class StudioRuntime {
       pitch: 1,
       offset: prev?.offset ?? 0,
       cache_key: null,
-      label: source === "record" ? "Your recording" : `Upload · ${audio.label}`,
+      label: source === "record" ? "Your voice" : `Upload · ${audio.label}`,
       created_at: stamp(),
     };
     this.commit(
@@ -913,6 +922,8 @@ class StudioRuntime {
         `measured ${audio.duration.toFixed(2)}s — timeline and bubble re-synced; image untouched`
       )
     );
+    this.setPartial({ busy: null });
+    void this.saveNow();
   }
 
   updateVoice(sceneId: string, lineId: string, patch: Partial<VoiceAsset>) {

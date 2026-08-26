@@ -49,7 +49,7 @@ export default function PlayersPanel() {
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-3 py-2.5">
         <div>
           <p className="text-[13px] font-bold text-bone">Players & voices</p>
-          <p className="font-mono text-[9px] text-faint">Match banter uses the recorded studio voice. New lines you type use the browser.</p>
+          <p className="font-mono text-[9px] text-faint">Record your own voice on each Banter line — that take wins over the studio voice</p>
         </div>
         <div className="flex items-center gap-2">
           <span className={`font-mono text-[9px] ${state.saveStatus === "saved" ? "text-fairway" : state.saveStatus === "error" ? "text-claret" : "text-gold"}`}>

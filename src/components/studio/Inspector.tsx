@@ -433,7 +433,7 @@ function VoicePanel({ doc, lineId }: { doc: SceneDocument; lineId: string }) {
             const f = e.target.files?.[0];
             if (!f) return;
             try {
-              studio.attachUserVoice(doc.id, lineId, await voiceFromFile(f), "upload");
+              await studio.attachUserVoice(doc.id, lineId, await voiceFromFile(f), "upload");
             } catch (er) {
               setErr(er instanceof Error ? er.message : String(er));
             }

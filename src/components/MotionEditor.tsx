@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import {
-  Clapperboard, Download, Loader2, Pause, Play, Plus, RotateCcw, Trash2,
-  Volume2, VolumeX, Zap,
+  Clapperboard, Download, Loader2, Mic, MicOff, Pause, Play, Plus, RotateCcw, Trash2,
+  Upload, Volume2, VolumeX, Zap,
 } from "lucide-react";
 import StageCanvas, { type StageHandle } from "./studio/StageCanvas";
 import Inspector from "./studio/Inspector";
@@ -9,6 +9,7 @@ import { SceneRail } from "./studio/TrackEditor";
 import PlayersPanel from "./studio/PlayersPanel";
 import ImageTray from "./studio/ImageTray";
 import { studio, useStudio, type SceneDocument } from "../engine/motion/studio";
+import { recorder, voiceFromFile } from "../engine/motion/editProviders";
 import { ASPECTS, type AspectSpec } from "../engine/motion/types";
 import { sceneAt } from "../engine/motion/timeline";
 import { Card } from "./ui";
@@ -65,7 +66,7 @@ export default function MotionEditor() {
         </p>
         <ol className="mt-3 flex flex-wrap gap-2 font-mono text-[10px] uppercase tracking-[0.12em] text-dim">
           <Step n="1" label="Add players" />
-          <Step n="2" label="Voice is UK English" />
+          <Step n="2" label="Record your voice" />
           <Step n="3" label="Write banter" />
           <Step n="4" label="Save · Play" />
         </ol>
@@ -217,7 +218,7 @@ function BanterPanel({ doc }: { doc: SceneDocument }) {
       <div className="flex items-center justify-between gap-2 border-b border-line px-3 py-2.5">
         <div>
           <p className="text-[13px] font-bold text-bone">Banter</p>
-          <p className="font-mono text-[9px] text-faint">type a player name or pick one · then write the line</p>
+          <p className="font-mono text-[9px] text-faint">write the line · tap Record to use your own voice · then Save</p>
         </div>
         <button
           onClick={() => studio.addDialogueLine(doc.id, players[0]?.name)}
@@ -231,47 +232,142 @@ function BanterPanel({ doc }: { doc: SceneDocument }) {
       </datalist>
       <div className="divide-y divide-white/[0.05]">
         {doc.dialogue.map((line) => (
-          <div key={line.id} className="flex gap-2 p-3">
-            <div className="w-[148px] shrink-0 space-y-1">
-              <input
-                list="bryme-player-names"
-                defaultValue={line.speaker_label}
-                key={`${line.id}-${line.speaker_label}`}
-                onBlur={(e) => {
-                  const v = e.target.value.trim();
-                  if (v && v !== line.speaker_label) studio.setSpeaker(doc.id, line.id, v);
-                }}
-                placeholder="Player name"
-                className="w-full rounded border border-white/10 bg-ink px-1.5 py-1 font-mono text-[11px] text-city outline-none focus:border-city/50"
-              />
-              <button
-                onClick={() => studio.speakDialogue(doc.id, line.id)}
-                className="w-full rounded border border-white/10 py-0.5 font-mono text-[8px] uppercase tracking-[0.14em] text-faint hover:border-city/40 hover:text-city"
-              >
-                Hear line
-              </button>
-            </div>
-            <textarea
-              value={line.text}
-              onChange={(e) => studio.editDialogueText(doc.id, line.id, e.target.value)}
-              onFocus={() => studio.select({ kind: "dialogue", scene: doc.id, id: line.id })}
-              rows={2}
-              className="min-w-0 flex-1 resize-none rounded-lg border border-white/10 bg-black/40 px-2.5 py-2 text-[14px] leading-relaxed text-bone outline-none focus:border-city/50"
-            />
-            <button
-              onClick={() => studio.deleteDialogueLine(doc.id, line.id)}
-              className="self-start rounded border border-white/10 p-1.5 text-faint hover:border-claret/40 hover:text-claret"
-              title="Delete line"
-            >
-              <Trash2 size={12} />
-            </button>
-          </div>
+          <BanterLine key={line.id} doc={doc} lineId={line.id} />
         ))}
         {doc.dialogue.length === 0 && (
           <p className="px-3 py-6 text-center text-[13px] text-faint">No lines yet — add one and start the argument.</p>
         )}
       </div>
     </Card>
+  );
+}
+
+function BanterLine({ doc, lineId }: { doc: SceneDocument; lineId: string }) {
+  const line = doc.dialogue.find((l) => l.id === lineId);
+  const voice = doc.voices[lineId];
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [rec, setRec] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  if (!line) return null;
+
+  const mine = voice?.source === "record" || voice?.source === "upload";
+  const hasTake = !!(voice?.url && !voice.label.includes("STALE") && !voice.label.includes("record again"));
+
+  const startRec = async () => {
+    setErr(null);
+    try {
+      await recorder.start();
+      setRec(true);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Microphone blocked — allow mic in the browser.");
+    }
+  };
+  const stopRec = async () => {
+    try {
+      const audio = await recorder.stop();
+      await studio.attachUserVoice(doc.id, lineId, audio, "record");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Could not save that take.");
+    } finally {
+      setRec(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2 p-3">
+      <div className="flex gap-2">
+        <div className="w-[148px] shrink-0 space-y-1">
+          <input
+            list="bryme-player-names"
+            defaultValue={line.speaker_label}
+            key={`${line.id}-${line.speaker_label}`}
+            onBlur={(e) => {
+              const v = e.target.value.trim();
+              if (v && v !== line.speaker_label) studio.setSpeaker(doc.id, line.id, v);
+            }}
+            placeholder="Player name"
+            className="w-full rounded border border-white/10 bg-ink px-1.5 py-1 font-mono text-[11px] text-city outline-none focus:border-city/50"
+          />
+          <p className={`font-mono text-[8px] uppercase tracking-[0.12em] ${mine ? "text-fairway" : "text-faint"}`}>
+            {mine ? (hasTake ? "Your voice" : "Record again") : voice?.provider === "studio" ? "Studio voice" : "Browser voice"}
+          </p>
+        </div>
+        <textarea
+          value={line.text}
+          onChange={(e) => studio.editDialogueText(doc.id, line.id, e.target.value)}
+          onFocus={() => studio.select({ kind: "dialogue", scene: doc.id, id: line.id })}
+          rows={2}
+          className="min-w-0 flex-1 resize-none rounded-lg border border-white/10 bg-black/40 px-2.5 py-2 text-[14px] leading-relaxed text-bone outline-none focus:border-city/50"
+        />
+        <button
+          onClick={() => studio.deleteDialogueLine(doc.id, line.id)}
+          className="self-start rounded border border-white/10 p-1.5 text-faint hover:border-claret/40 hover:text-claret"
+          title="Delete line"
+        >
+          <Trash2 size={12} />
+        </button>
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5 pl-[156px]">
+        {rec ? (
+          <button
+            onClick={stopRec}
+            className="flex items-center gap-1.5 rounded-lg border border-claret/50 bg-claret/15 px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-[0.12em] text-claret"
+          >
+            <MicOff size={12} /> Stop · save take
+          </button>
+        ) : (
+          <button
+            onClick={startRec}
+            className="flex items-center gap-1.5 rounded-lg border border-city/40 bg-city/10 px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-[0.12em] text-city hover:bg-city/20"
+          >
+            <Mic size={12} /> Record my voice
+          </button>
+        )}
+        <button
+          onClick={() => fileRef.current?.click()}
+          className="flex items-center gap-1.5 rounded-lg border border-white/15 px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-[0.12em] text-dim hover:text-bone"
+        >
+          <Upload size={12} /> Upload
+        </button>
+        <button
+          onClick={() => studio.speakDialogue(doc.id, line.id)}
+          className="flex items-center gap-1.5 rounded-lg border border-white/15 px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-[0.12em] text-dim hover:text-bone"
+        >
+          Hear
+        </button>
+        {mine && (
+          <button
+            onClick={() => studio.deleteVoice(doc.id, line.id)}
+            className="font-mono text-[9px] uppercase tracking-[0.12em] text-faint hover:text-claret"
+          >
+            Remove my take
+          </button>
+        )}
+        <input
+          ref={fileRef}
+          type="file"
+          accept="audio/*"
+          hidden
+          onChange={async (e) => {
+            const f = e.target.files?.[0];
+            e.target.value = "";
+            if (!f) return;
+            try {
+              await studio.attachUserVoice(doc.id, lineId, await voiceFromFile(f), "upload");
+            } catch (er) {
+              setErr(er instanceof Error ? er.message : "Could not read that file.");
+            }
+          }}
+        />
+      </div>
+      {rec && (
+        <p className="flex items-center gap-2 pl-[156px] font-mono text-[10px] text-claret">
+          <span className="h-2 w-2 animate-pulse rounded-full bg-claret" />
+          Recording — say the line, then tap Stop
+        </p>
+      )}
+      {err && <p className="pl-[156px] font-mono text-[10px] text-claret">{err}</p>}
+    </div>
   );
 }
 

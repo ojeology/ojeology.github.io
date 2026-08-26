@@ -19,6 +19,7 @@ export function readFilm(): SavedFilm | null {
     if (!raw) return null;
     const data = JSON.parse(raw) as SavedFilm;
     if (data?.v !== 1 || !data.project?.scenes?.length || !Array.isArray(data.players)) return null;
+    data.project = dropDeadBlobs(data.project);
     return data;
   } catch {
     return null;
@@ -35,20 +36,33 @@ export function writeFilm(data: Omit<SavedFilm, "v" | "savedAt">): string {
 export async function materializeProjectImages(project: ProjectDocument): Promise<ProjectDocument> {
   const scenes = await Promise.all(
     project.scenes.map(async (s) => {
-      const url = s.image.current.url;
-      if (!url || !url.startsWith("blob:")) return s;
-      try {
-        const data = await blobToDataUrl(url);
-        return { ...s, image: { ...s.image, current: { ...s.image.current, url: data } } };
-      } catch {
-        return s;
+      let image = s.image;
+      const imgUrl = s.image.current.url;
+      if (imgUrl?.startsWith("blob:")) {
+        try {
+          const data = await blobToDataUrl(imgUrl);
+          image = { ...s.image, current: { ...s.image.current, url: data } };
+        } catch {
+          /* keep blob */
+        }
       }
+      const voices = { ...s.voices };
+      for (const [id, v] of Object.entries(voices)) {
+        if (v.url?.startsWith("blob:")) {
+          try {
+            voices[id] = { ...v, url: await blobToDataUrl(v.url) };
+          } catch {
+            /* keep blob */
+          }
+        }
+      }
+      return { ...s, image, voices };
     })
   );
   return { ...project, scenes };
 }
 
-function blobToDataUrl(url: string): Promise<string> {
+export function blobToDataUrl(url: string): Promise<string> {
   return fetch(url)
     .then((r) => r.blob())
     .then(
@@ -60,6 +74,27 @@ function blobToDataUrl(url: string): Promise<string> {
           reader.readAsDataURL(blob);
         })
     );
+}
+
+function dropDeadBlobs(project: ProjectDocument): ProjectDocument {
+  const scenes = project.scenes.map((s) => {
+    let image = s.image;
+    if (image.current.url?.startsWith("blob:")) {
+      image = { ...image, current: { ...image.current, url: "" } };
+    }
+    const voices = { ...s.voices };
+    for (const [id, v] of Object.entries(voices)) {
+      if (v.url?.startsWith("blob:")) {
+        voices[id] = {
+          ...v,
+          url: null,
+          label: v.source === "record" || v.source === "upload" ? "Your voice — tap Record again" : v.label,
+        };
+      }
+    }
+    return { ...s, image, voices };
+  });
+  return { ...project, scenes };
 }
 
 export function clearFilm() {
