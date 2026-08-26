@@ -24,11 +24,15 @@ html {
 }
 
 body {
-  background: var(--color-ink);
-  color: var(--color-bone);
+  background: #111113;
+  color: #fff;
   font-family: var(--font-display);
-  overflow-x: hidden;
+  overflow: hidden;
+  height: 100%;
   -webkit-font-smoothing: antialiased;
+}
+html, #root {
+  height: 100%;
 }
 
 ::selection {

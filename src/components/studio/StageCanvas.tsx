@@ -664,7 +664,7 @@ function paintLowerThird(ctx: CanvasRenderingContext2D, W: number, H: number, sc
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
   const minute = (doc as SceneDocument & { event_type?: string })?.event_type ? String(scene.event_type ?? "").replace(/_/g, " ") : "";
-  ctx.fillText(`S${String(scene.panel_number).padStart(2, "0")}  ${scene.title}`, 12, H - bar - 22);
+  ctx.fillText(scene.title, 12, H - bar - 22);
   if (minute) {
     ctx.fillStyle = "#6CB4EE";
     ctx.font = '600 9px "JetBrains Mono", monospace';
