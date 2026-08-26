@@ -333,11 +333,38 @@ function clampRate(r: number) {
   return Math.max(0.1, Math.min(10, r));
 }
 
+let studioEl: HTMLAudioElement | null = null;
+
+export function playStudioUrl(url: string, gain = 1, onEnd?: (r: SpokenResult) => void): void {
+  stopSpeech();
+  const a = new Audio(url);
+  studioEl = a;
+  a.volume = Math.max(0, Math.min(1, gain));
+  const t0 = performance.now();
+  a.onended = () => {
+    if (studioEl === a) studioEl = null;
+    onEnd?.({ measured: (performance.now() - t0) / 1000, cancelled: false });
+  };
+  a.onerror = () => {
+    if (studioEl === a) studioEl = null;
+    onEnd?.({ measured: (performance.now() - t0) / 1000, cancelled: true });
+  };
+  void a.play().catch(() => {
+    if (studioEl === a) studioEl = null;
+    onEnd?.({ measured: 0, cancelled: true });
+  });
+}
+
 export function stopSpeech() {
   if (typeof window !== "undefined" && "speechSynthesis" in window) {
     window.speechSynthesis.cancel();
   }
   activeUtterance = null;
+  if (studioEl) {
+    studioEl.pause();
+    studioEl.src = "";
+    studioEl = null;
+  }
 }
 
 export function isSpeaking(): boolean {

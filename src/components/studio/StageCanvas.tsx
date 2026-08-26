@@ -210,7 +210,8 @@ const StageCanvas = forwardRef<StageHandle, Props>(function StageCanvas(
         if (!line || !voice) continue;
 
         duck(0.4, 420);
-        if (voice.url) {
+        const stale = voice.label.includes("STALE");
+        if (voice.url && !stale) {
           const a = new Audio(voice.url);
           a.volume = Math.max(0, Math.min(1, voice.gain));
           a.playbackRate = Math.max(0.5, Math.min(2, voice.speed));

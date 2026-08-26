@@ -24,7 +24,8 @@ import { fromLegacy, sportsCharacter } from "./sportsbible";
 import { IMAGE_EDIT_PROVIDERS, measureAudio, type ImageEditProviderId, type UserAudioResult } from "./editProviders";
 import { SEED_PLAYERS, newPlayerId, playerByName, type Player } from "./players";
 import { clearFilm, materializeProjectImages, readFilm, writeFilm } from "./persist";
-import { speakText, stopSpeech, type SpokenResult } from "./audio";
+import { playStudioUrl, speakText, stopSpeech, type SpokenResult } from "./audio";
+import { mergeStudioVoices, studioClipFor } from "./studioBed";
 
 /* ------------------------------------------------ selection ---- */
 
@@ -138,8 +139,17 @@ function buildSceneDocument(panelId: string): SceneDocument {
     });
     bubbles.push(bubble);
 
-    const est = estimateDuration(d.text, vp.speed, vp.default_emotion);
+    const clip = studioClipFor(id, d.text);
+    const est = clip?.duration ?? estimateDuration(d.text, vp.speed, vp.default_emotion);
     const voice = makeSilentVoice(id, est);
+    if (clip) {
+      voice.source = "ai";
+      voice.provider = "studio";
+      voice.url = clip.url;
+      voice.duration = clip.duration;
+      voice.duration_source = "measured";
+      voice.label = "Studio voice";
+    }
     voices[id] = voice;
     dialogue[dialogue.length - 1].voice_id = voice.id;
   });
@@ -219,7 +229,7 @@ class StudioRuntime {
   constructor() {
     const loaded = readFilm();
     if (loaded) {
-      const project = loaded.project;
+      const project = mergeStudioVoices(loaded.project);
       this.state = {
         project,
         timeline: deriveTimeline(project),
@@ -1159,6 +1169,15 @@ class StudioRuntime {
       onEnd?.({ measured: 0, cancelled: true });
       return;
     }
+    const voice = doc.voices[lineId];
+    const stale = voice?.label.includes("STALE");
+    if (voice?.url && !stale) {
+      playStudioUrl(voice.url, voice.gain ?? 1, (r) => {
+        if (!r.cancelled) this.reportMeasured(sceneId, lineId, r.measured);
+        onEnd?.(r);
+      });
+      return;
+    }
     const player = this.playerForLine(line);
     speakText(
       line.text,
@@ -1167,6 +1186,7 @@ class StudioRuntime {
         lang: player?.voiceLang,
         rate: player?.speed,
         pitch: player?.pitch,
+        gender: player?.gender,
       },
       (r) => {
         if (!r.cancelled) this.reportMeasured(sceneId, lineId, r.measured);
