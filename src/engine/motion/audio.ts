@@ -7,7 +7,7 @@
    ============================================================ */
 
 import { SFX_LIBRARY, type SfxId } from "./types";
-import { pickBrowserVoice, voiceProfile } from "./tts";
+import { DEFAULT_PIDGIN_LANG, isPidginDefaultVoice, pickBrowserVoice, pickPidginVoice, voiceProfile } from "./tts";
 import type { DialogueLine } from "./types";
 
 let ctx: AudioContext | null = null;
@@ -258,20 +258,23 @@ export interface SpeakVoice {
   rate?: number;
   pitch?: number;
   volume?: number;
+  gender?: "male" | "female" | "neutral";
 }
 
-export function speakText(text: string, voice: SpeakVoice = {}, onEnd?: (r: SpokenResult) => void): void {
-  if (typeof window === "undefined" || !("speechSynthesis" in window)) {
-    onEnd?.({ measured: 0, cancelled: true });
-    return;
-  }
+function resolveUtteranceVoice(voice: SpeakVoice): SpeechSynthesisVoice | undefined {
+  const voices = window.speechSynthesis.getVoices();
+  const gender = voice.gender === "female" ? "female" : "male";
+  const named = voice.voiceName ? voices.find((v) => v.name === voice.voiceName) : undefined;
+  if (named && isPidginDefaultVoice(named, gender)) return named;
+  return pickPidginVoice(voices, gender) ?? named;
+}
+
+function speakNow(text: string, voice: SpeakVoice, onEnd?: (r: SpokenResult) => void): void {
   window.speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
-  const named = voice.voiceName
-    ? window.speechSynthesis.getVoices().find((v) => v.name === voice.voiceName)
-    : undefined;
-  if (named) u.voice = named;
-  u.lang = named?.lang ?? voice.lang ?? "en-GB";
+  const picked = resolveUtteranceVoice(voice);
+  if (picked) u.voice = picked;
+  u.lang = picked?.lang ?? voice.lang ?? DEFAULT_PIDGIN_LANG;
   u.rate = clampRate(voice.rate ?? 1);
   u.pitch = Math.max(0, Math.min(2, voice.pitch ?? 1));
   u.volume = voice.volume ?? 1;
@@ -289,6 +292,26 @@ export function speakText(text: string, voice: SpeakVoice = {}, onEnd?: (r: Spok
   window.speechSynthesis.speak(u);
 }
 
+export function speakText(text: string, voice: SpeakVoice = {}, onEnd?: (r: SpokenResult) => void): void {
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+    onEnd?.({ measured: 0, cancelled: true });
+    return;
+  }
+  if (window.speechSynthesis.getVoices().length) {
+    speakNow(text, voice, onEnd);
+    return;
+  }
+  let kicked = false;
+  const kick = () => {
+    if (kicked) return;
+    kicked = true;
+    window.speechSynthesis.removeEventListener("voiceschanged", kick);
+    speakNow(text, voice, onEnd);
+  };
+  window.speechSynthesis.addEventListener("voiceschanged", kick);
+  window.setTimeout(kick, 400);
+}
+
 export function speakLine(line: DialogueLine, onEnd?: (r: SpokenResult) => void, extra?: SpeakVoice): void {
   const profile = voiceProfile(line.voice_profile_id);
   const picked = extra?.voiceName ? undefined : pickBrowserVoice(profile);
@@ -296,10 +319,11 @@ export function speakLine(line: DialogueLine, onEnd?: (r: SpokenResult) => void,
     line.text,
     {
       voiceName: extra?.voiceName ?? picked?.name,
-      lang: extra?.lang ?? picked?.lang ?? profile.language,
+      lang: extra?.lang ?? picked?.lang ?? DEFAULT_PIDGIN_LANG,
       rate: extra?.rate ?? line.speed_override ?? profile.speed,
       pitch: extra?.pitch ?? line.pitch_override ?? profile.pitch,
       volume: extra?.volume ?? profile.volume,
+      gender: extra?.gender ?? (profile.gender === "female" ? "female" : "male"),
     },
     onEnd
   );

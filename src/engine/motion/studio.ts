@@ -19,7 +19,7 @@ import {
 } from "./document";
 import { FOCUS_HINTS } from "./timeline";
 import { ASPECTS, SFX_LIBRARY, type AspectSpec, type BubbleStyle, type CameraMove, type MotionTimeline, type RenderStatus, type SfxId, type TTSProviderId, type TransitionKind } from "./types";
-import { TTS_PROVIDERS, cacheKey, estimateDuration, pickPidginVoice, pidginVoiceTune, PIDGIN_SAMPLE, resolveVoice, voiceProfile } from "./tts";
+import { TTS_PROVIDERS, browserVoices, cacheKey, estimateDuration, pickPidginVoice, pidginVoiceTune, PIDGIN_SAMPLE, PIDGIN_VOICE_FLOOR, resolveVoice, scorePidginVoice, voiceProfile } from "./tts";
 import { fromLegacy, sportsCharacter } from "./sportsbible";
 import { IMAGE_EDIT_PROVIDERS, measureAudio, type ImageEditProviderId, type UserAudioResult } from "./editProviders";
 import { SEED_PLAYERS, newPlayerId, playerByName, type Player } from "./players";
@@ -1065,15 +1065,18 @@ class StudioRuntime {
       if (extras && Object.keys(extras).length) this.updatePlayer(existing.id, extras);
       return playerByName(this.state.players, trimmed) ?? existing;
     }
+    const gender = extras?.gender ?? "male";
+    const auto = pickPidginVoice(browserVoices(), gender);
+    const tune = pidginVoiceTune(gender);
     const player: Player = {
       id: newPlayerId(),
       name: trimmed,
       team: extras?.team ?? "city",
-      voiceName: extras?.voiceName ?? "",
-      voiceLang: extras?.voiceLang ?? "en-NG",
-      gender: extras?.gender ?? "male",
-      speed: extras?.speed ?? 1,
-      pitch: extras?.pitch ?? 1,
+      voiceName: extras?.voiceName ?? auto?.name ?? "",
+      voiceLang: extras?.voiceLang ?? auto?.lang ?? "en-GB",
+      gender,
+      speed: extras?.speed ?? tune.speed,
+      pitch: extras?.pitch ?? tune.pitch,
       language_label: extras?.language_label ?? "Nigerian Pidgin",
     };
     this.state = { ...this.state, players: [...this.state.players, player], saveStatus: "unsaved" };
@@ -1178,14 +1181,15 @@ class StudioRuntime {
     const pidgin = /pidgin|naija|nigeria/i.test(p.language_label) || p.voiceLang.toLowerCase().startsWith("en-ng");
     speakText(pidgin ? PIDGIN_SAMPLE : `My name is ${p.name}. We go win am today.`, {
       voiceName: p.voiceName,
-      lang: p.voiceLang || "en-NG",
+      lang: p.voiceLang || "en-GB",
       rate: p.speed,
       pitch: p.pitch,
+      gender: p.gender,
     });
   }
 
   previewPidginVoice(voiceName: string, lang: string) {
-    speakText(PIDGIN_SAMPLE, { voiceName, lang: lang || "en-NG", rate: 0.96, pitch: 1.04 });
+    speakText(PIDGIN_SAMPLE, { voiceName, lang: lang || "en-GB", rate: 0.96, pitch: 1.04, gender: "male" });
   }
 
   applyPidginVoices(voices: { name: string; lang: string }[]) {
@@ -1193,21 +1197,7 @@ class StudioRuntime {
       this.setPartial({ lastError: "No browser voices yet. Use Chrome or Edge, then try again." });
       return;
     }
-    const players = this.state.players.map((p) => {
-      const pidgin = /pidgin|naija|nigeria/i.test(p.language_label) || p.team === "city" || p.id === "pl_nar" || p.id === "pl_crd";
-      if (!pidgin) return p;
-      const hit = pickPidginVoice(voices, p.gender);
-      if (!hit) return p;
-      const tune = pidginVoiceTune(p.gender);
-      return {
-        ...p,
-        voiceName: hit.name,
-        voiceLang: hit.lang || "en-NG",
-        speed: tune.speed,
-        pitch: tune.pitch,
-        language_label: p.language_label.includes("English") && p.id === "pl_nar" ? "Nigerian English" : "Nigerian Pidgin",
-      };
-    });
+    const players = this.assignPidginVoices(voices);
     this.state = { ...this.state, players, saveStatus: "unsaved" };
     this.emit();
     this.armSave();
@@ -1219,17 +1209,41 @@ class StudioRuntime {
     stopSpeech();
   }
 
+  /** Stamp the agreed Pidgin-friendly English (UK, unless en-NG exists) onto every player. */
+  private assignPidginVoices(voices: { name: string; lang: string }[]): Player[] {
+    return this.state.players.map((p) => {
+      const hit = pickPidginVoice(voices, p.gender);
+      if (!hit) return p;
+      const tune = pidginVoiceTune(p.gender);
+      return {
+        ...p,
+        voiceName: hit.name,
+        voiceLang: hit.lang || "en-GB",
+        speed: tune.speed,
+        pitch: tune.pitch,
+      };
+    });
+  }
+
   hydrateDefaultVoices(voices: { name: string; lang: string }[]) {
     if (!voices.length) return;
     let changed = false;
     const players = this.state.players.map((p) => {
-      if (p.voiceName) return p;
-      const want = p.gender === "female" ? /female|zira|samantha|hazel|susan|karen|tessa|fiona/i : /male|daniel|david|george|fred|ravi|thomas|google uk english male/i;
-      const byLang = voices.filter((v) => v.lang.toLowerCase().startsWith((p.voiceLang || "en").split("-")[0]));
-      const hit = byLang.find((v) => want.test(v.name)) ?? byLang[0] ?? voices[0];
+      const current = p.voiceName ? voices.find((v) => v.name === p.voiceName) : undefined;
+      const keep = current && scorePidginVoice(current, p.gender) >= PIDGIN_VOICE_FLOOR;
+      if (keep) return p;
+      const hit = pickPidginVoice(voices, p.gender);
       if (!hit) return p;
+      if (hit.name === p.voiceName && (hit.lang || p.voiceLang) === p.voiceLang) return p;
       changed = true;
-      return { ...p, voiceName: hit.name, voiceLang: hit.lang || p.voiceLang };
+      const tune = pidginVoiceTune(p.gender);
+      return {
+        ...p,
+        voiceName: hit.name,
+        voiceLang: hit.lang || "en-GB",
+        speed: p.voiceName ? p.speed : tune.speed,
+        pitch: p.voiceName ? p.pitch : tune.pitch,
+      };
     });
     if (!changed) return;
     this.state = { ...this.state, players, saveStatus: "unsaved" };

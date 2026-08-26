@@ -65,7 +65,7 @@ export default function MotionEditor() {
         </p>
         <ol className="mt-3 flex flex-wrap gap-2 font-mono text-[10px] uppercase tracking-[0.12em] text-dim">
           <Step n="1" label="Add players" />
-          <Step n="2" label="Pick a voice" />
+          <Step n="2" label="Voice is UK English" />
           <Step n="3" label="Write banter" />
           <Step n="4" label="Save · Play" />
         </ol>

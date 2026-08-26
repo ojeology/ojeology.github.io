@@ -291,6 +291,10 @@ export function browserVoices(): SpeechSynthesisVoice[] {
 /** Best-effort match: exact locale → language family → gender hint. */
 /** No TTS engine has a native Pidgin locale. Closest usable English: en-NG, then West African, then UK. */
 export const PIDGIN_SAMPLE = "Omo, we don win am! Make we just start this thing abeg.";
+/** The voice we actually ship as default — UK English. en-NG wins if the browser has it. */
+export const DEFAULT_PIDGIN_LANG = "en-GB";
+/** Keep a chosen voice only if it is at least UK-English quality for Pidgin. */
+export const PIDGIN_VOICE_FLOOR = 40;
 
 export function scorePidginVoice(v: { name: string; lang: string }, gender: "male" | "female" | "neutral" = "male"): number {
   const lang = v.lang.toLowerCase().replace("_", "-");
@@ -299,13 +303,20 @@ export function scorePidginVoice(v: { name: string; lang: string }, gender: "mal
   if (lang.startsWith("en-ng") || /nigeria|naija|abeo|ezinne/.test(name)) s += 120;
   else if (lang.startsWith("en-gh") || lang.startsWith("en-ke") || lang.startsWith("en-za") || lang.startsWith("en-tz")) s += 75;
   else if (lang.startsWith("en-jm") || lang.startsWith("en-tt") || /jamaica|caribbean/.test(name)) s += 58;
-  else if (lang.startsWith("en-gb") || /uk english|british|daniel|george|hazel|susan|ravi/.test(name)) s += 42;
+  else if (
+    lang.startsWith("en-gb") ||
+    /uk english|british|en-gb|daniel|george|hazel|susan|ravi|ryan|libby|sonia|maisie/.test(name)
+  ) s += 48;
   else if (lang.startsWith("en-ie") || lang.startsWith("en-au")) s += 22;
   else if (lang.startsWith("en-us") || /us english|american|zira|david|mark|samantha/.test(name)) s += 8;
-  if (gender === "female" && /female|zira|hazel|susan|karen|samantha|ezinne|tessa/.test(name)) s += 10;
-  if (gender === "male" && /male|daniel|david|george|fred|abeo|ravi|thomas/.test(name)) s += 10;
+  if (gender === "female" && /female|zira|hazel|susan|karen|samantha|ezinne|tessa|libby|sonia|maisie/.test(name)) s += 10;
+  if (gender === "male" && /male|daniel|david|george|fred|abeo|ravi|thomas|ryan/.test(name)) s += 10;
   if (/online|natural|neural|premium/.test(name)) s += 6;
   return s;
+}
+
+export function isPidginDefaultVoice(v: { name: string; lang: string } | undefined, gender: "male" | "female" | "neutral" = "male"): boolean {
+  return !!v && scorePidginVoice(v, gender) >= PIDGIN_VOICE_FLOOR;
 }
 
 export function pickPidginVoice<T extends { name: string; lang: string }>(
@@ -346,8 +357,14 @@ export function useBrowserVoices(): SpeechSynthesisVoice[] {
 export function pickBrowserVoice(profile: VoiceProfile): SpeechSynthesisVoice | undefined {
   const voices = browserVoices();
   if (!voices.length) return undefined;
-  if (profile.language === "en-NG" || /pidgin|naija|nigeria/i.test(profile.language_label)) {
-    return pickPidginVoice(voices, profile.gender === "neutral" ? "male" : profile.gender);
+  const gender = profile.gender === "neutral" ? "male" : profile.gender;
+  // Default path: the Pidgin-friendly English we agreed on (UK, unless en-NG exists).
+  if (
+    profile.language === "en-NG" ||
+    profile.language === "en-GB" ||
+    /pidgin|naija|nigeria|english/i.test(profile.language_label)
+  ) {
+    return pickPidginVoice(voices, gender);
   }
   const wants = profile.voice_id.replace("auto:", "").split("|");
 
@@ -356,16 +373,7 @@ export function pickBrowserVoice(profile: VoiceProfile): SpeechSynthesisVoice | 
     const exact = voices.find((v) => v.lang.toLowerCase().replace("_", "-") === lang.toLowerCase());
     if (exact) return exact;
   }
-  const family = profile.language.split("-")[0];
-  const sameFamily = voices.filter((v) => v.lang.toLowerCase().startsWith(family));
-  if (sameFamily.length) {
-    const wantFemale = profile.gender === "female";
-    const byName = sameFamily.find((v) =>
-      wantFemale ? /female|samantha|zira|karen|fiona|tessa/i.test(v.name) : /male|daniel|david|alex|george|fred/i.test(v.name)
-    );
-    return byName ?? sameFamily[0];
-  }
-  return voices[0];
+  return pickPidginVoice(voices, gender) ?? voices[0];
 }
 
 /* -------------------------------------- server-side adapters ----

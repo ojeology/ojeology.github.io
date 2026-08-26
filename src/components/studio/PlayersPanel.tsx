@@ -49,7 +49,7 @@ export default function PlayersPanel() {
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-3 py-2.5">
         <div>
           <p className="text-[13px] font-bold text-bone">Players & voices</p>
-          <p className="font-mono text-[9px] text-faint">Pidgin is spoken as written — we pick the closest English accent</p>
+          <p className="font-mono text-[9px] text-faint">Default voice is UK English — the Pidgin-friendly one we picked</p>
         </div>
         <div className="flex items-center gap-2">
           <span className={`font-mono text-[9px] ${state.saveStatus === "saved" ? "text-fairway" : state.saveStatus === "error" ? "text-claret" : "text-gold"}`}>
@@ -66,9 +66,10 @@ export default function PlayersPanel() {
 
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-fairway/[0.04] px-3 py-2.5">
         <p className="max-w-xl text-[12px] leading-relaxed text-bone/80">
-          No TTS speaks native Pidgin. Best English stand-in: <span className="text-fairway">Nigerian English</span> if your
-          browser has it, otherwise <span className="text-city">UK English</span> (slower, not American).{" "}
-          {best ? <>This machine’s pick: <span className="font-semibold text-bone">{best.name}</span>.</> : "Load Chrome/Edge to see voices."}
+          Every line now uses <span className="text-city">UK English</span> by default
+          {best ? <> — <span className="font-semibold text-bone">{best.name}</span></> : ""} (or Nigerian English if this
+          browser has it). Pidgin is spoken as written, not translated.{" "}
+          {!best && "Open Chrome or Edge if you hear nothing."}
         </p>
         <div className="flex gap-1.5">
           <button
@@ -83,7 +84,7 @@ export default function PlayersPanel() {
             disabled={!voices.length}
             className="rounded-lg border border-fairway/40 bg-fairway/10 px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-[0.12em] text-fairway hover:bg-fairway/20 disabled:opacity-40"
           >
-            Use Naija-friendly English
+            Reset to default voice
           </button>
         </div>
       </div>
@@ -141,7 +142,7 @@ export default function PlayersPanel() {
               }}
               className="rounded border border-white/10 bg-ink px-1 py-1 font-mono text-[10px] text-bone outline-none"
             >
-              <option value="">Default system voice</option>
+              <option value="">{best ? `Default · ${best.name}` : "Default · UK English"}</option>
               {ranked.map((v) => (
                 <option key={`${p.id}-${v.name}`} value={v.name}>
                   {pidginSet.has(v.name) ? "★ " : ""}{v.name}

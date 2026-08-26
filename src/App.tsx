@@ -1,4 +1,4 @@
-import { Component, useState, type ReactNode } from "react";
+import { Component, useEffect, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   BookMarked,
@@ -20,6 +20,16 @@ import SourceBrowser from "./components/SourceBrowser";
 import MotionEditor from "./components/MotionEditor";
 import Studio from "./components/Studio";
 import { PROJECT, useJobs } from "./engine/runtime";
+import { studio } from "./engine/motion/studio";
+import { useBrowserVoices } from "./engine/motion/tts";
+
+function VoiceDefaults() {
+  const voices = useBrowserVoices();
+  useEffect(() => {
+    if (voices.length) studio.hydrateDefaultVoices(voices.map((v) => ({ name: v.name, lang: v.lang })));
+  }, [voices.length]);
+  return null;
+}
 
 type ViewId = "motion" | "studio" | "console" | "bibles" | "jobs" | "docs" | "source";
 
@@ -71,6 +81,7 @@ export default function App() {
 
   return (
     <div className="grain flex min-h-screen bg-ink text-bone">
+      <VoiceDefaults />
       {/* ======================= side rail ======================= */}
       <aside className="sticky top-0 z-40 flex h-screen w-16 shrink-0 flex-col items-center border-r border-line bg-ink-2/70 py-4 backdrop-blur-md lg:w-56 lg:items-stretch lg:px-3">
         {/* wordmark */}
